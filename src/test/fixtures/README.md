@@ -2,7 +2,7 @@
 
 These sources deliberately stress isolation, payload conversion, replay, handler behavior,
 activity retries/cancellation, lifecycle cleanup, and unsupported operations. They are test inputs;
-the small user-facing examples live under `examples/greeting-v1` and `examples/greeting-v2`.
+runnable examples live in the separate [samples repository](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md).
 
 Both orders variants export the same workflow, activity, and DTO class names. Their private
 `example.rules.Rules` APIs conflict: version 2 uses a static `(String,int)` method and version 12
@@ -30,4 +30,4 @@ Use `-PsdkDir=/absolute/path/to/sdk-java` for a nondefault checkout. The Maven d
 JARs, and passes their paths to the archive packager. Fixture classes never enter the host/test
 classpath; `Class.forName("example.orders.OrderWorkflowImpl")` must fail in the host loader.
 The `FixtureCompiler` main class remains available to generate stress-test archives explicitly.
-The normal packaging task and restart demonstration use the simpler greeting examples instead.
+The separate samples repository uses its own Gradle-built greeting packages for its integration tests and restart demonstration.

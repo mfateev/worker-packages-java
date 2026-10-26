@@ -30,7 +30,7 @@ Publish two production components: the root `io.temporal:temporal-worker-package
 1. Package model, JSON schema, archive validator, directory catalog, and packager.
 2. Container runtime, class loader, dispatch adapters, and version-aware interceptor.
 3. CLI for listing packages and running a worker, plus an example client.
-4. Two independently built greeting application versions, plus conflicting dependency fixtures under `src/test/fixtures`.
+4. Internal conflicting-dependency fixtures under `src/test/fixtures`; independently runnable greeting applications and a worker host in the separate [samples repository](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md).
 5. Unit and Temporal integration tests.
 
 Use dependency locking or equivalent explicit version pinning. Keep SDK checkouts, prepared archives, and other generated files out of Git. Include commands in `README.md` for bootstrap, build, tests, package generation, package listing, worker startup, and the demonstration. The test suite must run without a separately installed Temporal server using `TestWorkflowEnvironment`.
@@ -223,9 +223,9 @@ Use real `.twp` archives and isolated classpaths. Packaging application classes 
 
 For cold-registry tests, reconstruct the container and its runtime objects rather than only creating a new client stub. Include an explicit saved-history replay test in addition to live worker resumption. For the cross-process activity test, provide a subprocess test or integration harness; a second object sharing the first worker's static state does not prove independence.
 
-## 12. Demonstration and definition of done
+## 12. Separate samples demonstration and definition of done
 
-Provide a script or documented commands that:
+The separate [samples repository](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md) provides its own build, tests and demonstration script that:
 
 1. Build greeting versions 1 and 2 with identical fully qualified class names. Both workflows use zero-argument `run()` and a `proceed()` signal. Version 1 calls `greet("World")` after the signal. Version 2 calls the new `getName()` activity before waiting, then calls the changed `greet(String greeting, String name)` with `"Hi"` and the returned name after the signal.
 2. Put only version 1 in a package directory and start a worker.
@@ -235,7 +235,7 @@ Provide a script or documented commands that:
 
 Keep the broader incompatible-dependency and payload scenarios under `src/test/fixtures/`, separate from this minimal public example.
 
-The prototype is complete when a clean checkout can bootstrap SDK main and resolve its locked dependencies, build both packages, pass the acceptance suite, and run that demonstration using documented commands. Report actual test commands and results, SDK/API limitations, and unsupported features. Do not present a happy-path demonstration as proof of replay or dependency isolation without the corresponding tests.
+The library must bootstrap SDK main, resolve its locked dependencies, and pass its tests from a clean checkout with no samples checkout present. Independently validate the samples repository by building both application packages, passing its two integration tests, and running its demonstration using documented commands. Report actual test commands and results, SDK/API limitations, and unsupported features. Do not present a happy-path demonstration as proof of replay or dependency isolation without the corresponding tests.
 
 Keep server-driven selection, remote loading, rollout/rollback, cross-run inheritance, richer lifecycle initialization, and hot unloading on a clearly labeled future-work list. Avoid implementing those features to finish this prototype.
 

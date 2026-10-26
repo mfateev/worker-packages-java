@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the plugin as an independent Git clone with a fresh sdk-java main checkout."""
+"""Verify the plugin as an independent Git clone with a fresh sdk-java main checkout and no samples checkout."""
 import argparse
 import json
 import os
@@ -23,6 +23,7 @@ def main():
     env = dict(os.environ)
     env.pop('TEMPORAL_SDK_DIR', None)
     env.pop('GRADLE_USER_HOME', None)
+    env.pop('WORKER_PACKAGES_DIR', None)
     for key in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'):
         env.pop(key, None)
     env['GIT_TERMINAL_PROMPT'] = '0'
@@ -47,18 +48,25 @@ def main():
         listing = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], cwd=root)
         owned_roots = {'.github', 'AGENTS.md', 'CONTRIBUTING.md', 'LICENSE', '.gitignore',
                        'ACCEPTANCE_REPORT.md', 'README.md', 'SPEC.md', 'build-logic',
-                       'build.gradle', 'docs', 'examples', 'gradle.properties', 'gradle',
+                       'build.gradle', 'docs', 'gradle.properties', 'gradle',
                        'gradlew', 'gradlew.bat', 'gradle.lockfile', 'scripts', 'settings.gradle', 'src'}
         names = sorted({os.fsdecode(name) for name in listing.split(b'\0') if name
                         and os.fsdecode(name).split('/', 1)[0] in owned_roots})
+        copied_sources = 0
         for name in names:
             source = root / name
-            if source.is_symlink() or not source.is_file():
+            if source.is_symlink():
+                raise RuntimeError(f'Expected independent source file: {source}')
+            # git ls-files also reports tracked files deleted by the current change.
+            if not source.exists():
+                continue
+            if not source.is_file():
                 raise RuntimeError(f'Expected independent source file: {source}')
             destination = snapshot / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
-        result['sourceFileCount'] = len(names)
+            copied_sources += 1
+        result['sourceFileCount'] = copied_sources
         # Only the temporary snapshot is committed; the user's original repository stays untouched.
         run(git + ['init', '-b', 'main'], snapshot)
         run(git + ['add', '--all'], snapshot)
@@ -66,15 +74,17 @@ def main():
         clone.parent.mkdir()
         run(git + ['clone', '--no-local', str(snapshot), str(clone)], workspace)
         assert not (clone.parent / 'sdk-java').exists()
+        assert not (clone.parent / 'worker-packages-java-samples').exists()
         run(['./scripts/bootstrap-sdk.sh'], clone)
-        run(['./gradlew', '--no-daemon', 'build', 'packageExamples', 'installDist', 'writeDependencyReport'], clone)
+        run(['./gradlew', '--no-daemon', 'build', 'installDist', 'writeDependencyReport'], clone)
         for location in (clone,):
             status = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=location, text=True)
             if status.strip():
                 raise RuntimeError(f'Validation modified tracked source or created unignored outputs in {location}: {status}')
-        run(['./gradlew', '--no-daemon', 'demo'], clone)
+        assert not (clone.parent / 'worker-packages-java-samples').exists()
+        result['samplesCheckoutAbsent'] = True
         result['status'] = 'passed'
-        print(f'Clean clone, fresh SDK bootstrap, build/tests, examples, CLI distribution and restart demo passed. Evidence: {output}', flush=True)
+        print(f'Clean clone, fresh SDK bootstrap, independent library build/tests and CLI distribution passed without a samples checkout. Evidence: {output}', flush=True)
     finally:
         (output / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
         # Preserve the clone and reports for review; it lives outside the implementation repository.

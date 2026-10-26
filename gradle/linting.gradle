@@ -3,7 +3,7 @@ allprojects {
     spotless {
         java {
             if (project == rootProject) {
-                target 'src/*/java/**/*.java', 'src/test/fixtures/*/src/main/java/**/*.java', 'examples/*/src/main/java/**/*.java'
+                target 'src/*/java/**/*.java', 'src/test/fixtures/*/src/main/java/**/*.java'
             } else {
                 target 'src/*/java/**/*.java'
             }

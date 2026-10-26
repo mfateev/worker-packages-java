@@ -27,14 +27,7 @@ jobs:
             21
       - uses: gradle/actions/setup-gradle@ac396bf1a80af16236baf54bd7330ae21dc6ece5 # v6
       - run: ./scripts/bootstrap-sdk.sh
-      - run: ./gradlew --no-daemon spotlessCheck build packageExamples installDist -PtestJavaVersion=${{ matrix.java }}
-      - run: ./gradlew --no-daemon demo -PtestJavaVersion=${{ matrix.java }}
-      - name: Installed CLI on selected runtime
-        shell: bash
-        run: |
-          runtime_var="JAVA_HOME_${{ matrix.java }}_X64"
-          export JAVA_HOME="${!runtime_var}"
-          ./scripts/validate-cli.py
+      - run: ./gradlew --no-daemon spotlessCheck build installDist -PtestJavaVersion=${{ matrix.java }}
       - name: Publish test reports
         if: success() || failure()
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6

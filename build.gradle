@@ -18,11 +18,9 @@ allprojects {
     version = rootProject.version
     repositories { mavenCentral() }
     dependencyLocking { lockAllConfigurations() }
-    if (!(name in ['greeting-v1', 'greeting-v2'])) {
-        dependencies {
-            testImplementation "junit:junit:$junitVersion"
-            testRuntimeOnly "org.slf4j:slf4j-simple:$slf4jVersion"
-        }
+    dependencies {
+        testImplementation "junit:junit:$junitVersion"
+        testRuntimeOnly "org.slf4j:slf4j-simple:$slf4jVersion"
     }
     tasks.withType(Test).configureEach {
         systemProperty 'plugin.rootDir', rootProject.projectDir.absolutePath
@@ -62,7 +60,6 @@ dependencies {
     cliRuntimeOnly "org.slf4j:slf4j-simple:$slf4jVersion"
     testImplementation "io.temporal:temporal-testing:$temporalVersion"
     testImplementation "io.temporal:temporal-test-server:$temporalVersion"
-    testImplementation project(':example-worker')
 }
 // CLI distributions add the local test service without publishing it as a library dependency.
 tasks.named('run') { classpath = files(sourceSets.main.output, configurations.cliRuntimeClasspath) }
@@ -72,23 +69,14 @@ distributions.main.contents {
     from(configurations.cliRuntimeClasspath) { into 'lib' }
 }
 
-tasks.register('packageExamples', Sync) {
-    into layout.buildDirectory.dir('examples')
-    ['greeting-v1', 'greeting-v2'].each { example ->
-        dependsOn ":${example}:workerPackage"
-        from { project(":${example}").tasks.named('workerPackage').get().outputs.files }
-    }
-}
 tasks.withType(Test).configureEach {
-    dependsOn 'packageExamples'
-    inputs.files(fileTree('src/test/fixtures') { include '*/src/**' }, fileTree('build/examples') { include '*.twp' }, configurations.privateJackson)
+    inputs.files(fileTree('src/test/fixtures') { include '*/src/**' }, configurations.privateJackson)
     doFirst {
         systemProperty 'acceptance.classpath', sourceSets.test.runtimeClasspath.asPath
         systemProperty 'fixture.jacksonJars', configurations.privateJackson.asPath
     }
 }
 tasks.named('test') {
-    dependsOn subprojects.collect { it.tasks.named('test') }
     dependsOn gradle.includedBuild('build-logic').task(':test')
 }
 tasks.register('acceptanceTest', Test) {
@@ -98,27 +86,13 @@ tasks.register('acceptanceTest', Test) {
     classpath = sourceSets.test.runtimeClasspath
     include 'io/temporal/worker/packages/acceptance/**'
 }
-tasks.register('demo', JavaExec) {
-    dependsOn 'testClasses', 'packageExamples'
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'io.temporal.worker.packages.acceptance.RestartDemo'
-    workingDir rootProject.projectDir
-    if (project.hasProperty('testJavaVersion')) {
-        javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(project.property('testJavaVersion') as int) }
-    }
-    systemProperty 'plugin.rootDir', rootProject.projectDir.absolutePath
-    doFirst { systemProperty 'acceptance.classpath', sourceSets.test.runtimeClasspath.asPath }
-}
 tasks.register('format') {
     dependsOn 'spotlessApply', gradle.includedBuild('build-logic').task(':spotlessApply')
-    dependsOn subprojects.collect { it.tasks.named('spotlessApply') }
 }
 tasks.register('formatCheck') {
     dependsOn 'spotlessCheck', gradle.includedBuild('build-logic').task(':spotlessCheck')
-    dependsOn subprojects.collect { it.tasks.named('spotlessCheck') }
 }
 tasks.named('check') { dependsOn 'formatCheck', gradle.includedBuild('build-logic').task(':check'), 'verifyJava8Compatibility' }
-tasks.named('assemble') { dependsOn subprojects.collect { it.tasks.named('assemble') } }
 tasks.register('writeDependencyReport') {
     doLast {
         def output = file('build/reports/shared-dependencies.txt')
@@ -127,7 +101,7 @@ tasks.register('writeDependencyReport') {
     }
 }
 tasks.register('verifyJava8Compatibility') {
-    dependsOn 'installDist', ':example-worker:installDist', 'packageExamples'
+    dependsOn 'installDist'
     doLast {
         def verifyJar = { InputStream input, String artifact ->
             new java.util.jar.JarInputStream(input).withCloseable { jar ->
@@ -143,21 +117,8 @@ tasks.register('verifyJava8Compatibility') {
                 }
             }
         }
-        def jars = files(
-            fileTree('build/install/temporal-worker-packages/lib') { include '*.jar' },
-            fileTree('examples/worker/build/install/example-worker/lib') { include '*.jar' }
-        ).files.toList().unique { it.name }
+        def jars = fileTree('build/install/temporal-worker-packages/lib') { include '*.jar' }.files.toList()
         jars.each { artifact -> artifact.withInputStream { verifyJar(it, artifact.name) } }
-        def packages = fileTree('build/examples') { include '*.twp' }.files
-        packages.each { artifact ->
-            new java.util.zip.ZipFile(artifact).withCloseable { zip ->
-                zip.entries().each { entry ->
-                    if (entry.name.endsWith('.jar')) {
-                        zip.getInputStream(entry).withCloseable { verifyJar(it, "${artifact.name}!${entry.name}") }
-                    }
-                }
-            }
-        }
-        println "Verified Java 8 base classes in ${jars.size()} distribution JARs and ${packages.size()} sample packages (multi-release alternatives excluded)"
+        println "Verified Java 8 base classes in ${jars.size()} CLI distribution JARs (multi-release alternatives excluded)"
     }
 }

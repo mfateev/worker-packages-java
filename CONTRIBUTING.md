@@ -1,19 +1,17 @@
 # Contributing
 
-This independent Java library follows the conventions of sdk-java main. Build with JDK 21 (the SDK includes Java 17/21 multi-release implementations); library sources, tests and samples compile with `--release 8`. Running the worker requires Java 8 or later.
+This independent Java library follows the conventions of sdk-java main. Build with JDK 21 (the SDK includes Java 17/21 multi-release implementations); library sources, tests and internal fixtures compile with `--release 8`. Running the worker requires Java 8 or later.
 
 ```bash
 ./scripts/bootstrap-sdk.sh
 ./gradlew spotlessApply
-./gradlew clean build packageExamples installDist writeDependencyReport
+./gradlew clean build installDist writeDependencyReport
 ./gradlew test -PtestJavaVersion=8
-./gradlew demo -PtestJavaVersion=8
-./scripts/validate-cli.py
 ```
 
-The worker example follows official Temporal samples by using `ClientConfigProfile.load()` from the same SDK main checkout’s `temporal-envconfig` module to configure both service stubs and the client. Use `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_PROFILE`, and `TEMPORAL_CONFIG_FILE` for its connection settings.
+Runnable applications and their restart/CLI demonstrations belong to the separate [samples repository](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md). Keep library builds independent of that checkout. Internal test fixtures remain under `src/test/fixtures`.
 
-The `testJavaVersion` property selects the library test and demo JDK using Gradle toolchains. Gradle plugin functional tests run on the build JDK 21 because they launch Gradle itself. Install the corresponding JDK locally; downloading JDKs is not implicit. Build Gradle itself on JDK 21. To run the installed CLI with another JDK, set `JAVA_HOME` to that JDK before invoking it or the CLI smoke script.
+The `testJavaVersion` property selects the library test JDK using Gradle toolchains. Gradle plugin functional tests run on the build JDK 21 because they launch Gradle itself. Install the corresponding JDK locally; downloading JDKs is not implicit. Build Gradle itself on JDK 21. To run the installed CLI with another JDK, set `JAVA_HOME` to that JDK before invoking it. The samples repository owns the CLI smoke script.
 
 - Use Java 8 syntax and APIs in production code, tests, and application fixtures.
 - Use JUnit 4.13.2, public test classes/methods, `TemporaryFolder`, and bounded `Timeout` rules. Preserve test coverage when changing harnesses.

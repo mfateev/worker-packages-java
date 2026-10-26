@@ -60,46 +60,6 @@ final class IntegrationSupport {
     throw new AssertionError("Timed out waiting for " + evidence, last);
   }
 
-  // Observe committed history rather than adding a query to the sample workflow API.
-  static void awaitGreetingWaiting(WorkflowClient client, WorkflowStub run, int version) {
-    await(
-        "greeting version " + version + " durably waiting",
-        Duration.ofSeconds(20),
-        () -> {
-          java.util.List<io.temporal.api.history.v1.HistoryEvent> events =
-              client.fetchHistory(run.getExecution().getWorkflowId()).getEvents();
-          boolean pinned = false;
-          long completedTask = 0;
-          long completedActivity = 0;
-          java.util.ArrayList<String> scheduled = new java.util.ArrayList<String>();
-          for (io.temporal.api.history.v1.HistoryEvent event : events) {
-            switch (event.getEventType()) {
-              case EVENT_TYPE_MARKER_RECORDED:
-                if (event.getMarkerRecordedEventAttributes().getMarkerName().equals("SideEffect"))
-                  pinned = true;
-                break;
-              case EVENT_TYPE_WORKFLOW_TASK_COMPLETED:
-                completedTask = event.getEventId();
-                break;
-              case EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
-                completedActivity = event.getEventId();
-                break;
-              case EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
-                scheduled.add(
-                    event.getActivityTaskScheduledEventAttributes().getActivityType().getName());
-                break;
-              default:
-                break;
-            }
-          }
-          return pinned
-              && completedTask > completedActivity
-              && (version == 1
-                  ? scheduled.isEmpty()
-                  : completedActivity > 0 && scheduled.equals(java.util.Arrays.asList("GetName")));
-        });
-  }
-
   static Host host(
       WorkflowClient client, Path packages, Path cache, String queue, WorkerInterceptor... existing)
       throws Exception {

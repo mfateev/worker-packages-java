@@ -22,14 +22,15 @@ public final class FixtureCompiler {
 
   public static void main(String[] args) throws Exception {
     Path destination =
-        args.length == 0 ? root().resolve("build/examples") : java.nio.file.Paths.get(args[0]);
+        args.length == 0 ? root().resolve("build/fixtures") : java.nio.file.Paths.get(args[0]);
     for (int version : new int[] {2, 12})
       System.out.println(build(destination, version).toAbsolutePath());
   }
 
   static Path root() {
     Path path = java.nio.file.Paths.get(System.getProperty("plugin.rootDir", ".")).toAbsolutePath();
-    while (path != null && !Files.isDirectory(path.resolve("examples"))) path = path.getParent();
+    while (path != null && !Files.isDirectory(path.resolve("src/test/fixtures")))
+      path = path.getParent();
     if (path == null)
       throw new IllegalStateException("Cannot find plugin root; set plugin.rootDir");
     return path;

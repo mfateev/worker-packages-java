@@ -7,7 +7,6 @@ com.fasterxml.jackson.core:jackson-core:2.14.3=privateJackson
 com.fasterxml.jackson.core:jackson-core:2.15.4=cliRuntimeClasspath,compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
 com.fasterxml.jackson.core:jackson-databind:2.14.3=privateJackson
 com.fasterxml.jackson.core:jackson-databind:2.15.4=cliRuntimeClasspath,compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
-com.fasterxml.jackson.dataformat:jackson-dataformat-toml:2.15.4=testRuntimeClasspath
 com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.15.4=cliRuntimeClasspath,runtimeClasspath,testRuntimeClasspath
 com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.4=cliRuntimeClasspath,runtimeClasspath,testRuntimeClasspath
 com.fasterxml.jackson:jackson-bom:2.15.4=cliRuntimeClasspath,compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath

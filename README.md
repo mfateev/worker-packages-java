@@ -8,7 +8,7 @@ See [ACCEPTANCE_REPORT.md](ACCEPTANCE_REPORT.md) for the commands, complete acce
 
 ## Build
 
-Build with a Java 21 JDK, as required by SDK main’s optional multi-release classes. Library code, tests and sample packages target Java 8; the standalone worker runs on Java 8 or later. Commands below run from this repository root:
+Build with a Java 21 JDK, as required by SDK main’s optional multi-release classes. Library code and tests target Java 8; the CLI and embedding applications run on Java 8 or later. Commands below run from this repository root:
 
 ```bash
 ./scripts/bootstrap-sdk.sh
@@ -16,7 +16,6 @@ Build with a Java 21 JDK, as required by SDK main’s optional multi-release cla
 ./gradlew spotlessApply
 ./gradlew check
 ./gradlew acceptanceTest
-./gradlew packageExamples
 ./gradlew installDist
 ```
 
@@ -37,13 +36,13 @@ There are two production components:
 | Worker library, package model/tooling, runtime and CLI | `src/main/java/io/temporal/worker/packages/` | `io.temporal:temporal-worker-packages` |
 | Packaging Gradle plugin | `build-logic/` | `io.temporal:temporal-worker-packages-gradle-plugin` |
 
-The root Java packages separate API, tooling, runtime and CLI code within the same library JAR. The default library output is `build/libs/temporal-worker-packages-0.1.0-SNAPSHOT.jar`. All tests live in `src/test/java`; isolation fixtures live in `src/test/fixtures`. `examples/` contains independent application packages and a runnable worker host.
+The root Java packages separate API, tooling, runtime and CLI code within the same library JAR. The default library output is `build/libs/temporal-worker-packages-0.1.0-SNAPSHOT.jar`. All tests live in `src/test/java`; isolation fixtures live in `src/test/fixtures`. Runnable applications live in the separate [worker-packages-java-samples repository](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md). Library builds and tests do not require that checkout.
 
 The main library's Maven dependency metadata includes the SDK dependencies needed by embedding applications. The local test-server dependency belongs to the CLI distribution and test harness; it is excluded from the library's runtime publication.
 
 ## Commands
 
-After `installDist`, the executable is `build/install/temporal-worker-packages/bin/temporal-worker-packages`. Examples below call it `plugin` for readability; substitute that full path.
+After `installDist`, the executable is `build/install/temporal-worker-packages/bin/temporal-worker-packages`. Examples below call it `plugin` for readability; substitute that full path. Supply application archives in `./packages`; see the [samples repository](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md) for runnable greeting packages.
 
 ```bash
 plugin help
@@ -59,7 +58,7 @@ plugin result --workflow-id greeting-a --timeout-seconds 60
 
 The CLI labels the SHA-256 of the exact `.twp` bytes as **archive checksum** in `list`, `validate`, and `pack` output. It is separate from the package version, which can be a Git commit SHA.
 
-The example takes no arguments. Version 1 calls `greet(String name)`; version 2 changes it to `greet(String greeting, String name)` and adds `getName()`. A single `proceed` signal releases the workflow from its durable wait. See [examples/README.md](examples/README.md) for the complete comparison.
+The example takes no arguments. Version 1 calls `greet(String name)`; version 2 changes it to `greet(String greeting, String name)` and adds `getName()`. A single `proceed` signal releases the workflow from its durable wait. See the [samples README](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md) for the complete comparison.
 
 Flags support `--name value` and `--name=value`. Flags override environment defaults. Unknown/repeated flags and missing values fail clearly. Client inputs are JSON arrays of method arguments. Client results are printed as JSON. `--run-id` targets a particular run for signal/query/update/result; `--workflow-id` is always required.
 
@@ -77,7 +76,7 @@ Flags support `--name value` and `--name=value`. Flags override environment defa
 
 For a source build, include this repository from the host's Gradle settings with `includeBuild("../worker-packages-java")`, then declare `implementation("io.temporal:temporal-worker-packages:0.1.0-SNAPSHOT")`. Its included SDK build supplies main-branch source artifacts. Prepare that SDK checkout first.
 
-See the runnable [worker example](examples/worker/src/main/java/example/worker/PackageWorker.java) and its [launch instructions](examples/README.md#worker-implementation). It takes the package directory as its single command-line argument.
+See the separate runnable [worker example](https://github.com/mfateev/worker-packages-java-samples/blob/main/worker/src/main/java/example/worker/PackageWorker.java) and its [launch instructions](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md#worker-implementation). It takes the package directory as its single command-line argument.
 
 Prepare packages before creating or starting pollers. Use a distinct plugin instance per factory:
 
@@ -151,7 +150,7 @@ Type names stay `GreetingWorkflow` and `Greet`, for example, across versions and
 
 ## Packages, isolation, and limits
 
-See [SPEC.md](SPEC.md), [manifest schema](src/main/resources/workflow-package.schema.json) and [header schema](src/main/resources/package-header.schema.json). Each `.twp` is a deterministic ZIP containing a strict manifest and its ordered JARs. Packages contain no SDK revision requirement. Legacy `temporalSdkRevision` metadata is accepted and ignored; host/package compatibility policy will be designed separately. Package versions are opaque strings, such as Git SHAs or semantic versions, unique across the entire directory. Valid tokens match `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`. Listing sorts lexically for stable output; this order never chooses a version. Duplicate versions fail before worker startup, even when their package IDs differ. Empty listing is valid; an empty worker runtime fails. Adding archives takes effect after restart. Each greeting sample applies the `io.temporal.worker-packages` Gradle plugin from `build-logic/`. Its `workerPackage` task produces a validated `.twp` in its own `build/libs/`, and participates in `assemble` and `build`. `packageExamples` collects both sample archives into `build/examples/` without placing their classes on the host classpath. See the [sample build configuration](examples/README.md).
+See [SPEC.md](SPEC.md), [manifest schema](src/main/resources/workflow-package.schema.json) and [header schema](src/main/resources/package-header.schema.json). Each `.twp` is a deterministic ZIP containing a strict manifest and its ordered JARs. Packages contain no SDK revision requirement. Legacy `temporalSdkRevision` metadata is accepted and ignored; host/package compatibility policy will be designed separately. Package versions are opaque strings, such as Git SHAs or semantic versions, unique across the entire directory. Valid tokens match `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`. Listing sorts lexically for stable output; this order never chooses a version. Duplicate versions fail before worker startup, even when their package IDs differ. Empty listing is valid; an empty worker runtime fails. Adding archives takes effect after restart. Applications apply the `io.temporal.worker-packages` Gradle plugin from `build-logic/`. Its `workerPackage` task produces a validated `.twp` in the application's `build/libs/`, and participates in `assemble` and `build`. See the separate [sample build configuration](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md).
 
 Validation rejects unsafe paths/symlinks, duplicate identities and classes, host-owned classes, undeclared files, JAR `Class-Path` and `META-INF/INDEX.LIST`, including reserved definitions hidden in multi-release layouts. Streaming limits default to 256 MiB archive bytes, 1 GiB expanded bytes, 1 MiB manifest, and 100,000 entries. Embedders configure `ValidationLimits` when constructing the validator/catalog. Cache publication uses a cross-process lock and verifies previously prepared content.
 
@@ -184,19 +183,22 @@ Each target has at most one direct patch per package. Startup rejects competing 
 
 A patch is an explicit deployment override of the original pinned code and archive checksum. The worker validates and prepares the patch's own archive bytes. Without a patch, original checksum matching remains strict. Patch metadata does not authenticate its publisher. Patch workflow code must replay the existing history deterministically and preserve the payload/activity contracts required by that history; incompatible changes still produce normal Temporal replay failures.
 
-## Demonstration and tests
+## Validation and samples
+
+Run the independent library checks from this repository:
 
 ```bash
-./scripts/demo.sh
-./gradlew test
+./gradlew build installDist
+./gradlew test -PtestJavaVersion=8
 ./gradlew acceptanceTest
-./scripts/validate-cli.py
 ./scripts/validate-clean-checkout.py
 ```
 
-The CLI smoke check requires `packageExamples installDist` first. The clean-checkout script commits only a temporary source snapshot, clones it into a fresh directory, bootstraps a separate sibling SDK, and verifies the build/tests and demo without committing this working repository. Generated outputs and logs stay outside Git.
+Library tests retain internal isolation, replay, retry, payload and lifecycle fixtures under `src/test/fixtures`. The included `build-logic/` tests validate packaging through Gradle TestKit. The clean-checkout script snapshots only this repository, bootstraps a separate SDK checkout, and verifies the library without a samples checkout.
 
-The demo builds the two small greeting examples independently, starts a local test service, pins A to version 1, installs version 2, and replaces the worker JVM. A still calls the original one-argument activity and returns `Hello, World!`; a new run B first calls `getName()`, then the changed two-argument activity, and returns `Hi, multi-versioned worker!`. Full digests and histories are saved with the demo output. The broader orders, DTO, cancellation, and conflicting-dependency cases live under `src/test/fixtures/` as test-only fixtures. Cross-process acceptance checks activity retry headers on a fresh process. Fixture application classes never enter the host classpath. Tests also cover archive validation, cold runtimes/caches, replay, payload annotations, local activities, buffered signals, queries, updates/validators, and identical type names across package IDs. The SDK Java test server does not expire abandoned sticky queues. Acceptance tests and the restart demo therefore use a public gRPC interceptor to request full-history tasks through normal queues; production plugin behavior is unchanged. Consult the acceptance report for details and actual results.
+Runnable greeting applications, the standalone worker example, their two integration tests, the separate-worker restart demo, and the CLI smoke script live in [worker-packages-java-samples](https://github.com/mfateev/worker-packages-java-samples/blob/main/README.md). That repository has its own Gradle wrapper and includes the library and SDK as local composite builds. Its `build` and `demo` commands are separate from this library's validation.
+
+The SDK Java test server does not expire abandoned sticky queues. Integration tests request full-history normal-queue tasks using a public gRPC interceptor; production plugin behavior is unchanged. See the acceptance report for details and actual results.
 
 ## Prototype boundaries
 
