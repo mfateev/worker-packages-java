@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:io.temporal:package-header:v1",
+  "title": "Temporal container.package header payload",
+  "description": "Workflow starts carry package identity; activity tasks carry the workflow's durably pinned complete package reference. The containing Temporal Payload uses encoding=json/plain.",
+  "oneOf": [
+    {
+      "title": "Workflow start",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formatVersion", "packageId"],
+      "properties": {
+        "formatVersion": {"type": "integer", "const": 1},
+        "packageId": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"}
+      }
+    },
+    {
+      "title": "Regular or local activity",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formatVersion", "packageId", "packageVersion", "sha256"],
+      "properties": {
+        "formatVersion": {"type": "integer", "const": 1},
+        "packageId": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"},
+        "packageVersion": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  ]
+}

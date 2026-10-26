@@ -1,0 +1,8 @@
+apply plugin: 'application'
+
+application { mainClass = 'example.worker.PackageWorker' }
+dependencies {
+    implementation project(':')
+    implementation "io.temporal:temporal-envconfig:$temporalVersion"
+    runtimeOnly "org.slf4j:slf4j-simple:$slf4jVersion"
+}

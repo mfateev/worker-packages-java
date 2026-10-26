@@ -1,0 +1,18 @@
+plugins { id 'java-library' }
+def dependencyVersions = new Properties()
+file('../../../../gradle.properties').withInputStream { dependencyVersions.load(it) }
+def temporalVersion = providers.gradleProperty('temporalVersion').getOrElse(dependencyVersions.getProperty('temporalVersion'))
+group = 'example.orders'
+version = '2'
+repositories { mavenCentral() }
+java { sourceCompatibility = JavaVersion.VERSION_1_8; targetCompatibility = JavaVersion.VERSION_1_8 }
+dependencies {
+    compileOnly "io.temporal:temporal-sdk:$temporalVersion"
+    compileOnly 'com.uber.m3:tally-core:0.13.0'
+    compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.15.4'
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.15.4'
+    compileOnly 'example.rules:rules-v2:2'
+}
+dependencyLocking { lockAllConfigurations() }
+tasks.withType(JavaCompile).configureEach { options.release = 8; options.compilerArgs += ['-Xlint:none', '-Xlint:deprecation', '-Werror', '-parameters'] }
+tasks.withType(Jar).configureEach { preserveFileTimestamps = false; reproducibleFileOrder = true }

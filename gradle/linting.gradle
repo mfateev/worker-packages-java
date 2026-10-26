@@ -1,0 +1,15 @@
+allprojects {
+    apply plugin: 'com.diffplug.spotless'
+    spotless {
+        java {
+            if (project == rootProject) {
+                target 'src/*/java/**/*.java', 'src/test/fixtures/*/src/main/java/**/*.java', 'examples/*/src/main/java/**/*.java'
+            } else {
+                target 'src/*/java/**/*.java'
+            }
+            targetExclude '**/generated/*', '**/.idea/**'
+            googleJavaFormat('1.24.0')
+        }
+    }
+    tasks.named('classes') { dependsOn 'spotlessApply' }
+}

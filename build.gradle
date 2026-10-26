@@ -1,0 +1,163 @@
+import org.gradle.api.attributes.java.TargetJvmVersion
+
+plugins {
+    id 'java-library'
+    id 'application'
+    id 'net.ltgt.errorprone' version '4.1.0' apply false
+    id 'com.diffplug.spotless' version '7.0.2'
+}
+apply from: "$rootDir/gradle/versioning.gradle"
+ext {
+    junitVersion = '4.13.2'
+    jacksonVersion = '2.15.4'
+    slf4jVersion = '1.7.36'
+}
+allprojects {
+    apply plugin: 'java-library'
+    group = rootProject.group
+    version = rootProject.version
+    repositories { mavenCentral() }
+    dependencyLocking { lockAllConfigurations() }
+    if (!(name in ['greeting-v1', 'greeting-v2'])) {
+        dependencies {
+            testImplementation "junit:junit:$junitVersion"
+            testRuntimeOnly "org.slf4j:slf4j-simple:$slf4jVersion"
+        }
+    }
+    tasks.withType(Test).configureEach {
+        systemProperty 'plugin.rootDir', rootProject.projectDir.absolutePath
+    }
+}
+apply from: "$rootDir/gradle/java.gradle"
+apply from: "$rootDir/gradle/linting.gradle"
+apply from: "$rootDir/gradle/errorprone.gradle"
+apply from: "$rootDir/gradle/publishing.gradle"
+
+application { mainClass = 'io.temporal.worker.packages.cli.Main' }
+configurations {
+    privateJackson {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    cliRuntimeOnly { canBeConsumed = false; canBeResolved = false }
+    cliRuntimeClasspath {
+        canBeConsumed = false
+        extendsFrom runtimeClasspath, cliRuntimeOnly
+        attributes {
+            attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+            attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category, Category.LIBRARY))
+            attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+            attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 8)
+        }
+    }
+}
+dependencies {
+    privateJackson 'com.fasterxml.jackson.core:jackson-core:2.14.3'
+    privateJackson 'com.fasterxml.jackson.core:jackson-databind:2.14.3'
+    api "io.temporal:temporal-sdk:$temporalVersion"
+    api "com.fasterxml.jackson.core:jackson-databind:$jacksonVersion"
+    compileOnly "io.temporal:temporal-test-server:$temporalVersion"
+    cliRuntimeOnly "io.temporal:temporal-test-server:$temporalVersion"
+    cliRuntimeOnly "org.slf4j:slf4j-simple:$slf4jVersion"
+    testImplementation "io.temporal:temporal-testing:$temporalVersion"
+    testImplementation "io.temporal:temporal-test-server:$temporalVersion"
+    testImplementation project(':example-worker')
+}
+// CLI distributions add the local test service without publishing it as a library dependency.
+tasks.named('run') { classpath = files(sourceSets.main.output, configurations.cliRuntimeClasspath) }
+tasks.named('startScripts') { classpath = files(tasks.named('jar'), configurations.cliRuntimeClasspath) }
+distributions.main.contents {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(configurations.cliRuntimeClasspath) { into 'lib' }
+}
+
+tasks.register('packageExamples', Sync) {
+    into layout.buildDirectory.dir('examples')
+    ['greeting-v1', 'greeting-v2'].each { example ->
+        dependsOn ":${example}:workerPackage"
+        from { project(":${example}").tasks.named('workerPackage').get().outputs.files }
+    }
+}
+tasks.withType(Test).configureEach {
+    dependsOn 'packageExamples'
+    inputs.files(fileTree('src/test/fixtures') { include '*/src/**' }, fileTree('build/examples') { include '*.twp' }, configurations.privateJackson)
+    doFirst {
+        systemProperty 'acceptance.classpath', sourceSets.test.runtimeClasspath.asPath
+        systemProperty 'fixture.jacksonJars', configurations.privateJackson.asPath
+    }
+}
+tasks.named('test') {
+    dependsOn subprojects.collect { it.tasks.named('test') }
+    dependsOn gradle.includedBuild('build-logic').task(':test')
+}
+tasks.register('acceptanceTest', Test) {
+    description = 'Runs the worker package acceptance tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    include 'io/temporal/worker/packages/acceptance/**'
+}
+tasks.register('demo', JavaExec) {
+    dependsOn 'testClasses', 'packageExamples'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.temporal.worker.packages.acceptance.RestartDemo'
+    workingDir rootProject.projectDir
+    if (project.hasProperty('testJavaVersion')) {
+        javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(project.property('testJavaVersion') as int) }
+    }
+    systemProperty 'plugin.rootDir', rootProject.projectDir.absolutePath
+    doFirst { systemProperty 'acceptance.classpath', sourceSets.test.runtimeClasspath.asPath }
+}
+tasks.register('format') {
+    dependsOn 'spotlessApply', gradle.includedBuild('build-logic').task(':spotlessApply')
+    dependsOn subprojects.collect { it.tasks.named('spotlessApply') }
+}
+tasks.register('formatCheck') {
+    dependsOn 'spotlessCheck', gradle.includedBuild('build-logic').task(':spotlessCheck')
+    dependsOn subprojects.collect { it.tasks.named('spotlessCheck') }
+}
+tasks.named('check') { dependsOn 'formatCheck', gradle.includedBuild('build-logic').task(':check'), 'verifyJava8Compatibility' }
+tasks.named('assemble') { dependsOn subprojects.collect { it.tasks.named('assemble') } }
+tasks.register('writeDependencyReport') {
+    doLast {
+        def output = file('build/reports/shared-dependencies.txt')
+        output.parentFile.mkdirs()
+        output.text = configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.collect { it.moduleVersion.id.toString() }.sort().join('\n') + '\n'
+    }
+}
+tasks.register('verifyJava8Compatibility') {
+    dependsOn 'installDist', ':example-worker:installDist', 'packageExamples'
+    doLast {
+        def verifyJar = { InputStream input, String artifact ->
+            new java.util.jar.JarInputStream(input).withCloseable { jar ->
+                java.util.jar.JarEntry entry
+                while ((entry = jar.nextJarEntry) != null) {
+                    if (entry.name.endsWith('.class') && !entry.name.startsWith('META-INF/versions/') && entry.name != 'module-info.class') {
+                        def data = new DataInputStream(jar)
+                        if (data.readInt() != (int) 0xCAFEBABE) throw new GradleException("Invalid class: ${artifact}!${entry.name}")
+                        data.readUnsignedShort()
+                        def major = data.readUnsignedShort()
+                        if (major > 52) throw new GradleException("Java 8 incompatible class version ${major}: ${artifact}!${entry.name}")
+                    }
+                }
+            }
+        }
+        def jars = files(
+            fileTree('build/install/temporal-worker-packages/lib') { include '*.jar' },
+            fileTree('examples/worker/build/install/example-worker/lib') { include '*.jar' }
+        ).files.toList().unique { it.name }
+        jars.each { artifact -> artifact.withInputStream { verifyJar(it, artifact.name) } }
+        def packages = fileTree('build/examples') { include '*.twp' }.files
+        packages.each { artifact ->
+            new java.util.zip.ZipFile(artifact).withCloseable { zip ->
+                zip.entries().each { entry ->
+                    if (entry.name.endsWith('.jar')) {
+                        zip.getInputStream(entry).withCloseable { verifyJar(it, "${artifact.name}!${entry.name}") }
+                    }
+                }
+            }
+        }
+        println "Verified Java 8 base classes in ${jars.size()} distribution JARs and ${packages.size()} sample packages (multi-release alternatives excluded)"
+    }
+}

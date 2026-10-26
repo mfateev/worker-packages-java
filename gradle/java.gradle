@@ -1,0 +1,40 @@
+// Keep the published baseline aligned with sdk-java; the build itself uses a modern JDK.
+allprojects {
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) }
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+        withJavadocJar()
+        withSourcesJar()
+    }
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release = 8
+        options.compilerArgs += ['-Xlint:none', '-Xlint:deprecation', '-Werror', '-parameters']
+    }
+    tasks.withType(Jar).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+        manifest.attributes('Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'Temporal Technologies Inc.')
+    }
+    tasks.withType(Javadoc).configureEach {
+        options.encoding = 'UTF-8'
+        options.addStringOption('Xdoclint:reference', '-quiet')
+        options.addBooleanOption('Werror', true)
+        options.addBooleanOption('html5', true)
+    }
+    tasks.withType(Test).configureEach {
+        useJUnit()
+        if (project.hasProperty('testJavaVersion')) {
+            javaLauncher = javaToolchains.launcherFor {
+                languageVersion = JavaLanguageVersion.of(project.property('testJavaVersion') as int)
+            }
+        }
+        testLogging { events 'passed', 'skipped', 'failed'; exceptionFormat 'full' }
+        forkEvery = 1
+        // Each acceptance class starts its own service and subprocesses; bound resource usage.
+        maxParallelForks = 1
+    }
+}

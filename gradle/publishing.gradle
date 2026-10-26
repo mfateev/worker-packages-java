@@ -1,0 +1,22 @@
+// Prepare inspectable local publications; remote release infrastructure is repository-specific.
+configure(rootProject) {
+    apply plugin: 'maven-publish'
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                from components.java
+                // Keep declared Maven versions when compiling against local SDK main sources.
+                pom {
+                    name = project.name
+                    description = 'Temporal Worker Packages ' + project.name
+                    licenses {
+                        license {
+                            name = 'The Apache License, Version 2.0'
+                            url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,32 @@
+// Match sdk-java tag/releaseVersion semantics, retaining this independent project's coordinates.
+ext.getTag = {
+    def output = new ByteArrayOutputStream()
+    def result = exec {
+        commandLine 'git', 'describe', '--tags'
+        standardOutput = output
+        errorOutput = new ByteArrayOutputStream()
+        ignoreExitValue = true
+    }
+    result.exitValue == 0 ? output.toString().trim().replaceFirst('^v', '') : 'unknown'
+}
+ext.getVersionName = {
+    if (rootProject.hasProperty('releaseVersion')) {
+        throw new GradleException('Use -PworkerPackagesReleaseVersion to avoid overriding the included SDK version.')
+    }
+    if (rootProject.hasProperty('workerPackagesReleaseVersion')) {
+        String release = rootProject.property('workerPackagesReleaseVersion').toString()
+        if (!(release ==~ /^\d+[.]\d+[.]\d+(?:-RC\d+)?$/)) {
+            throw new GradleException("Invalid workerPackagesReleaseVersion '${release}'. Expected X.Y.Z or X.Y.Z-RCN.")
+        }
+        return release
+    }
+    String tag = getTag()
+    def match = (tag =~ /^(\d+)[.](\d+)[.](\d+)(?:-RC(\d+))?(-.*?)?(-g[0-9a-f]+)?$/)
+    // A new independent repository has no release tag yet.
+    if (match.size() == 0) return '0.1.0-SNAPSHOT'
+    def (_, major, minor, patch, rc, extra, git) = match[0]
+    if (git) return rc ? "${major}.${minor}.${patch}-SNAPSHOT" : "${major}.${(minor as int) + 1}.0-SNAPSHOT"
+    return tag
+}
+group = 'io.temporal'
+version = getVersionName()

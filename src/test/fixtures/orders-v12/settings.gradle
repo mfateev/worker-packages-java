@@ -1,0 +1,12 @@
+rootProject.name = 'orders-v12'
+def sdkPath = providers.gradleProperty('sdkDir').orElse(providers.environmentVariable('TEMPORAL_SDK_DIR')).getOrElse('../../../../../sdk-java')
+includeBuild(file(sdkPath)) {
+    dependencySubstitution {
+        ['temporal-sdk', 'temporal-serviceclient', 'temporal-testing', 'temporal-test-server'].each { artifact ->
+            substitute module("io.temporal:${artifact}") using project(":${artifact}")
+        }
+    }
+}
+includeBuild('../rules-v12') {
+    dependencySubstitution { substitute module('example.rules:rules-v12') using project(':') }
+}

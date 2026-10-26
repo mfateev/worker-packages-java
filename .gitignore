@@ -1,0 +1,21 @@
+.gradle/
+.gradle-user-home/
+**/build/
+.package-cache/
+# Keep previously generated caches ignored.
+.sdk-cache/
+demo-state/
+*.twp
+*.hprof
+*.log
+__pycache__/
+
+# Match SDK editor and IDE exclusions.
+.idea/
+*.iml
+.DS_Store
+**/out/
+.classpath
+.project
+.settings/
+.vscode/

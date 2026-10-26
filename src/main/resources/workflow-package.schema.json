@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Temporal Worker Package version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "formatVersion",
+    "containerApiVersion",
+    "javaRelease",
+    "payloadEncoding",
+    "packageId",
+    "packageVersion",
+    "classpath",
+    "workflows",
+    "activities"
+  ],
+  "properties": {
+    "formatVersion": {
+      "const": 1
+    },
+    "containerApiVersion": {
+      "const": 1
+    },
+    "javaRelease": {
+      "const": 8
+    },
+    "payloadEncoding": {
+      "const": "temporal-default-v1"
+    },
+    "packageId": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+    },
+    "packageVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+      "description": "Opaque version token, such as a Git commit SHA or semantic version. No ordering is implied."
+    },
+    "temporalSdkRevision": {
+      "description": "Optional legacy metadata; accepted and ignored."
+    },
+    "classpath": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "\\.jar$"
+      }
+    },
+    "workflows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "implementation"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+          },
+          "implementation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "activities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "implementation"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+          },
+          "implementation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "patchesVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+      "description": "Optional version this patch explicitly replaces. It must differ from packageVersion."
+    }
+  }
+}

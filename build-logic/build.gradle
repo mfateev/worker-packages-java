@@ -1,0 +1,71 @@
+plugins {
+    id 'java-gradle-plugin'
+    id 'maven-publish'
+    id 'com.diffplug.spotless' version '7.0.2'
+    id 'net.ltgt.errorprone' version '4.1.0'
+}
+apply from: file('../gradle/versioning.gradle')
+repositories { mavenCentral() }
+dependencyLocking {
+    lockAllConfigurations()
+    lockFile = file('dependency-locks/temporal-worker-packages-gradle-plugin.lockfile')
+}
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+// Compile the canonical archive implementation into the standalone packaging plugin.
+sourceSets {
+    main {
+        java {
+            srcDir '../src/main/java'
+            include 'io/temporal/worker/packages/gradle/**'
+            include 'io/temporal/worker/packages/api/**'
+            include 'io/temporal/worker/packages/tooling/**'
+        }
+        resources {
+            srcDir '../src/main/resources'
+            include 'workflow-package.schema.json'
+        }
+    }
+}
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 8
+    options.compilerArgs += ['-Xlint:none', '-Xlint:deprecation', '-Werror', '-parameters']
+}
+tasks.withType(Jar).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+dependencies {
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.4'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation gradleTestKit()
+    errorproneJavac 'com.google.errorprone:javac:9+181-r4173-1'
+    errorprone 'com.google.errorprone:error_prone_core:2.31.0'
+}
+gradlePlugin {
+    plugins {
+        workerPackage {
+            id = 'io.temporal.worker-packages'
+            implementationClass = 'io.temporal.worker.packages.gradle.WorkerPackageGradlePlugin'
+            displayName = 'Temporal Worker Packages'
+            description = 'Builds validated Temporal Worker Packages from Java projects.'
+        }
+    }
+}
+spotless {
+    java {
+        target 'src/*/java/**/*.java'
+        googleJavaFormat('1.24.0')
+    }
+}
+tasks.named('classes') { dependsOn 'spotlessApply' }
+tasks.named('check') { dependsOn 'spotlessCheck' }
+tasks.withType(Test).configureEach {
+    useJUnit()
+    maxParallelForks = 1
+    testLogging { events 'passed', 'failed'; exceptionFormat 'full' }
+}

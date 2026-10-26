@@ -1,0 +1,18 @@
+pluginManagement { includeBuild('build-logic') }
+rootProject.name = 'temporal-worker-packages'
+include 'example-worker', 'greeting-v1', 'greeting-v2'
+project(':greeting-v1').projectDir = file('examples/greeting-v1')
+project(':greeting-v2').projectDir = file('examples/greeting-v2')
+project(':example-worker').projectDir = file('examples/worker')
+def sdkPath = providers.gradleProperty('sdkDir').orElse(providers.environmentVariable('TEMPORAL_SDK_DIR')).getOrElse('../sdk-java')
+def sdk = file(sdkPath)
+if (!new File(sdk, 'settings.gradle').isFile()) {
+    throw new GradleException('sdk-java main checkout missing; clone temporalio/sdk-java next to this repository or set sdkDir')
+}
+includeBuild(sdk) {
+    dependencySubstitution {
+        ['temporal-sdk', 'temporal-serviceclient', 'temporal-testing', 'temporal-test-server', 'temporal-envconfig'].each { artifact ->
+            substitute module("io.temporal:${artifact}") using project(":${artifact}")
+        }
+    }
+}
