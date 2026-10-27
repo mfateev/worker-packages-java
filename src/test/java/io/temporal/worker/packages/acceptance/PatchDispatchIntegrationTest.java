@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.junit.Rule;
 import org.junit.Test;
@@ -62,20 +63,19 @@ public class PatchDispatchIntegrationTest {
     PackageRef unrelatedRef = originalCatalog.require("orders", OTHER).ref();
     AtomicReference<String> selected = new AtomicReference<>(BASE);
     AtomicInteger selections = new AtomicInteger();
-    WorkerPackagePlugin.Options originalOptions =
-        WorkerPackagePlugin.Options.newBuilder()
-            .setVersionSelector(
+    Consumer<WorkerPackagePlugin.Builder> originalOptions =
+        builder ->
+            builder.setVersionSelector(
                 context -> {
                   selections.incrementAndGet();
                   return selected.get();
-                })
-            .build();
+                });
     AtomicInteger replaySelections = new AtomicInteger();
-    WorkerPackagePlugin.Options replayOptions = forbidSelection(replaySelections);
+    Consumer<WorkerPackagePlugin.Builder> replayOptions = forbidSelection(replaySelections);
     String queue = "patch-chain-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub oldRun = workflow(client, queue, "base-" + UUID.randomUUID(), "OrderWorkflow");
       WorkflowStub unrelated =
           workflow(client, queue, "other-" + UUID.randomUUID(), "OrderWorkflow");
@@ -159,20 +159,19 @@ public class PatchDispatchIntegrationTest {
     PackageRef expected =
         new PackageRef("orders", BASE, catalog.require("orders", SECOND_PATCH).ref().sha256());
     AtomicInteger selections = new AtomicInteger();
-    WorkerPackagePlugin.Options options =
-        WorkerPackagePlugin.Options.newBuilder()
-            .setVersionSelector(
+    Consumer<WorkerPackagePlugin.Builder> options =
+        builder ->
+            builder.setVersionSelector(
                 context -> {
                   selections.incrementAndGet();
                   assertTrue(context.getAvailableVersions().contains(BASE));
                   return BASE;
-                })
-            .build();
+                });
     AtomicInteger replaySelections = new AtomicInteger();
     String queue = "patch-only-new-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub run = workflow(client, queue, "new-base-" + UUID.randomUUID(), "OrderWorkflow");
       WorkflowExecutionHistory history;
       try (Host host = host(client, packages, temp.resolve("cache"), queue, options)) {
@@ -217,7 +216,7 @@ public class PatchDispatchIntegrationTest {
       WorkflowServiceStubs service =
           WorkflowServiceStubs.newServiceStubs(TestServices.options().setTarget(target).build());
       try {
-        WorkflowClient client = client(service, "orders");
+        WorkflowClient client = client(service);
         WorkflowStub run =
             workflow(client, queue, "retry-patch-" + UUID.randomUUID(), "OrderWorkflow");
         try (ProcessHost first =
@@ -262,15 +261,14 @@ public class PatchDispatchIntegrationTest {
     }
   }
 
-  private static WorkerPackagePlugin.Options forbidSelection(AtomicInteger selections) {
-    return WorkerPackagePlugin.Options.newBuilder()
-        .setVersionSelector(
+  private static Consumer<WorkerPackagePlugin.Builder> forbidSelection(AtomicInteger selections) {
+    return builder ->
+        builder.setVersionSelector(
             context -> {
               selections.incrementAndGet();
               throw new IllegalStateException(
                   "A replayed package pin must not invoke version selection");
-            })
-        .build();
+            });
   }
 
   private static void assertPinAndHeaders(WorkflowExecutionHistory history, PackageRef expected) {
@@ -288,7 +286,8 @@ public class PatchDispatchIntegrationTest {
                 Optional.of(event.getMarkerRecordedEventAttributes().getDetailsOrThrow("data")),
                 String[].class,
                 String[].class);
-        assertArrayEquals(new String[] {expected.packageVersion(), expected.sha256()}, pin);
+        assertArrayEquals(
+            new String[] {expected.packageVersion(), expected.sha256(), expected.packageId()}, pin);
       }
       if (event.getEventType() == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {
         activities++;

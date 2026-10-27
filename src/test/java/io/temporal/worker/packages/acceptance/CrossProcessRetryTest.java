@@ -45,7 +45,7 @@ public class CrossProcessRetryTest {
       WorkflowServiceStubs service =
           WorkflowServiceStubs.newServiceStubs(TestServices.options().setTarget(target).build());
       try {
-        io.temporal.client.WorkflowClient client = client(service, "orders");
+        io.temporal.client.WorkflowClient client = client(service);
         WorkflowStub run = workflow(client, queue, "retry-" + UUID.randomUUID(), "OrderWorkflow");
         try (io.temporal.worker.packages.acceptance.ProcessHost first =
             new ProcessHost(

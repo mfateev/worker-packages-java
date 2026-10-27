@@ -50,8 +50,12 @@ public class PluginLifecycleIntegrationTest {
         new java.util.concurrent.atomic.AtomicInteger();
     try (io.temporal.testing.TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
-      WorkerPackagePlugin plugin = WorkerPackagePlugin.open(packages, temp.resolve("cache"), queue);
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
+      WorkerPackagePlugin plugin =
+          WorkerPackagePlugin.newBuilder()
+              .setPackagesDirectory(packages)
+              .setCacheDirectory(temp.resolve("cache"))
+              .build();
       WorkerFactory factory =
           WorkerFactory.newInstance(
               client, WorkerFactoryOptions.newBuilder().setPlugins(plugin).build());
@@ -92,8 +96,12 @@ public class PluginLifecycleIntegrationTest {
     Path packages = packages();
     String queue = "dynamic-conflict-" + UUID.randomUUID();
     try (io.temporal.testing.TestWorkflowEnvironment env = TestServices.environment()) {
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
-      WorkerPackagePlugin plugin = WorkerPackagePlugin.open(packages, temp.resolve("cache"), queue);
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
+      WorkerPackagePlugin plugin =
+          WorkerPackagePlugin.newBuilder()
+              .setPackagesDirectory(packages)
+              .setCacheDirectory(temp.resolve("cache"))
+              .build();
       SimplePlugin preceding =
           new SimplePlugin("acceptance.conflicting-dynamic") {
             @Override
@@ -123,7 +131,7 @@ public class PluginLifecycleIntegrationTest {
     String ordinaryQueue = managedQueue + "-ordinary";
     try (io.temporal.testing.TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient packagedClient = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient packagedClient = client(env.getWorkflowServiceStubs());
       WorkflowClient plainClient = WorkflowClient.newInstance(env.getWorkflowServiceStubs());
       try (io.temporal.worker.packages.acceptance.IntegrationSupport.Host host =
           host(packagedClient, packages, temp.resolve("cache"), managedQueue)) {
@@ -222,8 +230,12 @@ public class PluginLifecycleIntegrationTest {
         };
     try (io.temporal.testing.TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
-      WorkerPackagePlugin plugin = WorkerPackagePlugin.open(packages, temp.resolve("cache"), queue);
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
+      WorkerPackagePlugin plugin =
+          WorkerPackagePlugin.newBuilder()
+              .setPackagesDirectory(packages)
+              .setCacheDirectory(temp.resolve("cache"))
+              .build();
       io.temporal.worker.WorkerFactory factory =
           WorkerFactory.newInstance(
               client, WorkerFactoryOptions.newBuilder().setPlugins(observer, plugin).build());
@@ -264,7 +276,7 @@ public class PluginLifecycleIntegrationTest {
     Path release = temp.resolve("release-activity");
     try (io.temporal.testing.TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       io.temporal.client.WorkflowStub run =
           workflow(client, queue, "drain-run-" + UUID.randomUUID(), "DrainWorkflow");
       try (io.temporal.worker.packages.acceptance.IntegrationSupport.Host host =

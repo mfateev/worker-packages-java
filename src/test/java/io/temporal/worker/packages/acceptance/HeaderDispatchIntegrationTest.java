@@ -54,7 +54,6 @@ public class HeaderDispatchIntegrationTest {
     Files.copy(FixtureCompiler.build(temp.resolve("fixtures"), 2), packages.resolve("orders.twp"));
     List<InvalidHeader> invalid =
         Arrays.asList(
-            new InvalidHeader(null, "Missing required"),
             new InvalidHeader("{broken", "Malformed"),
             new InvalidHeader("{}", "malformed"),
             new InvalidHeader("{\"formatVersion\":2,\"packageId\":\"orders\"}", "Unsupported"),
@@ -229,7 +228,9 @@ public class HeaderDispatchIntegrationTest {
             application.isNonRetryable());
         assertTrue(
             application.getOriginalMessage(),
-            application.getOriginalMessage().contains("Missing package version orders/2"));
+            application
+                .getOriginalMessage()
+                .contains("Missing activity type ChargeCard for version 2"));
         assertEquals(RetryState.RETRY_STATE_MAXIMUM_ATTEMPTS_REACHED, failure.getRetryState());
         assertEquals(Arrays.asList(1, 2, 3), attempts);
         assertNull(
@@ -304,7 +305,11 @@ public class HeaderDispatchIntegrationTest {
             };
           }
         };
-    WorkerPackagePlugin plugin = WorkerPackagePlugin.open(packages, cache, queue);
+    WorkerPackagePlugin plugin =
+        WorkerPackagePlugin.newBuilder()
+            .setPackagesDirectory(packages)
+            .setCacheDirectory(cache)
+            .build();
     SimplePlugin last =
         new SimplePlugin("acceptance.activity-attempt-observer") {
           @Override

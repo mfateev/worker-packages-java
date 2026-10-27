@@ -2,7 +2,6 @@ package io.temporal.worker.packages.runtime;
 
 import io.temporal.common.converter.EncodedValues;
 import io.temporal.worker.packages.api.PackageRef;
-import io.temporal.worker.packages.tooling.ValidatedPackage;
 import io.temporal.workflow.DynamicWorkflow;
 import io.temporal.workflow.Workflow;
 
@@ -37,25 +36,21 @@ public final class ContainerDynamicWorkflow implements DynamicWorkflow {
               WorkerPackagePlugin.SelectionContext context =
                   new WorkerPackagePlugin.SelectionContext(
                       state.packageId, Workflow.getInfo(), runtime.catalog());
-              String version = PackageRef.validateVersion(versionSelector.selectVersion(context));
+              String version =
+                  PackageRef.validateVersion(
+                      state.requestedVersion == null
+                          ? versionSelector.selectVersion(context)
+                          : state.requestedVersion);
               PackageRef reference =
-                  runtime.catalog().referenceForWorkflow(state.packageId, version);
-              ValidatedPackage selected = runtime.catalog().resolveForExecution(reference);
-              if (selected.manifest().workflows().stream()
-                  .noneMatch(entry -> logicalType.equals(entry.type())))
-                throw new PackageRuntimeException(
-                    "Package "
-                        + state.packageId
-                        + "/"
-                        + version
-                        + " does not support workflow type "
-                        + logicalType);
-              return new String[] {reference.packageVersion(), reference.sha256()};
+                  runtime.catalog().referenceForWorkflowType(logicalType, version);
+              return new String[] {
+                reference.packageVersion(), reference.sha256(), reference.packageId()
+              };
             });
-    if (pin == null || pin.length != 2)
+    if (pin == null || (pin.length != 2 && pin.length != 3))
       throw new PackageRuntimeException("Invalid durable worker package pin");
-    PackageRef ref = new PackageRef(state.packageId, pin[0], pin[1]);
-    runtime.catalog().resolveForExecution(ref);
+    PackageRef ref = new PackageRef(pin.length == 3 ? pin[2] : state.packageId, pin[0], pin[1]);
+    runtime.catalog().resolveForExecution(ref, logicalType, true);
     state.packageRef = ref;
     return runtime.invokeWorkflow(ref, logicalType, args, state);
   }

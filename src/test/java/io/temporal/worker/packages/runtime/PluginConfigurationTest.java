@@ -12,6 +12,7 @@ import io.temporal.worker.packages.tooling.PackagePackager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.jar.JarOutputStream;
 import org.junit.Before;
 import org.junit.Rule;
@@ -28,15 +29,66 @@ public class PluginConfigurationTest {
   }
 
   @Test
-  public void rejectsInvalidQueueBeforePreparingPackages() {
-    Path missing = temporary.resolve("missing");
+  public void clientOnlyPluginAppendsInterceptorWithoutPackagesOrWorkerConfiguration()
+      throws Exception {
+    io.temporal.common.interceptors.WorkflowClientInterceptor original =
+        new io.temporal.common.interceptors.WorkflowClientInterceptorBase() {};
+    io.temporal.client.WorkflowClientOptions.Builder options =
+        io.temporal.client.WorkflowClientOptions.newBuilder()
+            .setNamespace("existing")
+            .setInterceptors(original);
+    try (WorkerPackagePlugin plugin = WorkerPackagePlugin.newBuilder().build()) {
+      plugin.configureWorkflowClient(options);
+      assertEquals("existing", options.build().getNamespace());
+      assertSame(original, options.build().getInterceptors()[0]);
+      assertInstanceOf(PackageClientInterceptor.class, options.build().getInterceptors()[1]);
+      WorkerFactoryOptions.Builder factory = WorkerFactoryOptions.newBuilder();
+      plugin.configureWorkerFactory(factory);
+      assertNull(factory.build().getWorkerInterceptors());
+      assertTrue(plugin.toString().contains("clientOnly=true"));
+      assertThrows(PackageRuntimeException.class, plugin::runtime);
+    }
+  }
+
+  @Test
+  public void rejectsIncompleteWorkerConfigurationBeforePreparingPackages() {
     assertThrows(
         IllegalArgumentException.class,
-        () -> WorkerPackagePlugin.open(missing, temporary.resolve("cache"), " "));
+        () ->
+            WorkerPackagePlugin.newBuilder().setCacheDirectory(temporary.resolve("cache")).build());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WorkerPackagePlugin.newBuilder().setCurrentVersion("2").build());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WorkerPackagePlugin.newBuilder().setVersionSelector(context -> "2").build());
     assertThrows(
         NullPointerException.class,
-        () -> WorkerPackagePlugin.open(missing, temporary.resolve("cache"), null));
+        () -> WorkerPackagePlugin.newBuilder().setPackagesDirectory(null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WorkerPackagePlugin.newBuilder().setClientVersion("../bad"));
     assertFalse(Files.exists(temporary.resolve("cache")));
+  }
+
+  @Test
+  public void builderCreatesIndependentPluginsAndLastWorkerPolicyWins() throws Exception {
+    try (WorkerPackagePlugin ignored = open(builder -> {}, "2", "12")) {}
+    WorkerPackagePlugin.Builder builder =
+        WorkerPackagePlugin.newBuilder()
+            .setPackagesDirectory(temporary.resolve("packages"))
+            .setCacheDirectory(temporary.resolve("cache"))
+            .setVersionSelector(
+                context -> {
+                  throw new AssertionError("Replaced selector must not run");
+                })
+            .setCurrentVersion("2");
+    try (WorkerPackagePlugin first = builder.build();
+        WorkerPackagePlugin second = builder.setCurrentVersion("12").build()) {
+      assertTrue(first.toString().contains("currentVersion=2"));
+      assertTrue(second.toString().contains("currentVersion=12"));
+      assertNotSame(first.runtime(), second.runtime());
+    }
   }
 
   @Test
@@ -74,7 +126,7 @@ public class PluginConfigurationTest {
   public void rejectsNullVersionSelector() {
     assertThrows(
         NullPointerException.class,
-        () -> WorkerPackagePlugin.Options.newBuilder().setVersionSelector(null));
+        () -> WorkerPackagePlugin.newBuilder().setVersionSelector(null));
   }
 
   @Test
@@ -91,14 +143,13 @@ public class PluginConfigurationTest {
   @Test
   public void diagnosticsDoNotInvokeConfiguredSelectorOrClaimACurrentVersion() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    WorkerPackagePlugin.Options options =
-        WorkerPackagePlugin.Options.newBuilder()
-            .setVersionSelector(
+    Consumer<WorkerPackagePlugin.Builder> options =
+        builder ->
+            builder.setVersionSelector(
                 context -> {
                   calls.incrementAndGet();
                   return context.getAvailableVersions().get(0);
-                })
-            .build();
+                });
     try (WorkerPackagePlugin plugin = open(options, "2.0.0", "release-alpha")) {
       String diagnostics = plugin.toString();
       assertTrue(diagnostics, diagnostics.contains("versionSelector=configured"));
@@ -111,8 +162,7 @@ public class PluginConfigurationTest {
 
   @Test
   public void multipleInstalledVersionsCanOpenBeforeASelectionPolicyIsNeeded() throws Exception {
-    try (WorkerPackagePlugin plugin =
-        open(WorkerPackagePlugin.Options.newBuilder().build(), "2.0.0", "release-alpha")) {
+    try (WorkerPackagePlugin plugin = open(builder -> {}, "2.0.0", "release-alpha")) {
       String diagnostics = plugin.toString();
       assertTrue(diagnostics, diagnostics.contains("versionSelector=singleInstalled"));
       assertFalse(diagnostics, diagnostics.contains("currentVersion="));
@@ -163,11 +213,11 @@ public class PluginConfigurationTest {
   }
 
   private WorkerPackagePlugin open() throws Exception {
-    return open(WorkerPackagePlugin.Options.newBuilder().build(), "release-2026.10");
+    return open(builder -> {}, "release-2026.10");
   }
 
-  private WorkerPackagePlugin open(WorkerPackagePlugin.Options options, String... versions)
-      throws Exception {
+  private WorkerPackagePlugin open(
+      Consumer<WorkerPackagePlugin.Builder> options, String... versions) throws Exception {
     Path input = Files.createDirectories(temporary.resolve("input"));
     try (JarOutputStream jar =
         new JarOutputStream(Files.newOutputStream(input.resolve("app.jar")))) {}
@@ -183,6 +233,11 @@ public class PluginConfigurationTest {
               + "\"classpath\":[\"app.jar\"],\"workflows\":[{\"type\":\"Example\",\"implementation\":\"example.Workflow\"}],\"activities\":[]}\n");
       new PackagePackager().pack(manifest, input, packages.resolve("test-" + i + ".twp"));
     }
-    return WorkerPackagePlugin.open(packages, temporary.resolve("cache"), "managed", options);
+    WorkerPackagePlugin.Builder pluginBuilder =
+        WorkerPackagePlugin.newBuilder()
+            .setPackagesDirectory(packages)
+            .setCacheDirectory(temporary.resolve("cache"));
+    options.accept(pluginBuilder);
+    return pluginBuilder.build();
   }
 }

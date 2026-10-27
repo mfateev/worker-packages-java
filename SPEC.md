@@ -97,23 +97,23 @@ Configuration must include package directory, prepared-cache directory, Temporal
 At startup, scan only direct regular `.twp` files in the package directory; ignore other extensions and do not follow symlinks. A nonexistent or unreadable directory is an error. Validate every candidate and build an immutable catalog:
 
 ```text
-(packageId, packageVersion) -> archive digest and prepared classpath
-packageId -> available versions in deterministic lexical order
+(packageVersion, workflowType) -> workflow archive and prepared classpath
+(packageVersion, activityType) -> activity archive and prepared classpath
 ```
 
-Reject duplicate version strings globally, including archives with different package IDs or identical archives under different filenames, with both paths in the diagnostic. If any candidate fails validation, fail startup before polling. An empty directory is valid for the listing command; running a worker requires at least one package.
+Allow multiple archives with the same version and archive label. Reject duplicate workflow types and duplicate activity types within a version, with both paths in the diagnostic; workflow and activity types have separate namespaces. If any candidate fails validation, fail startup before polling. An empty directory is valid for the listing command; running a worker requires at least one package.
 
-Each package version is a complete deployment. New runs use the version returned by the host selector; if that version lacks a requested workflow type, report an unsupported type rather than falling back to an older version. An older run resolves its own version's manifest. Different package IDs may expose the same logical workflow or activity type.
+A version is a deployment composed of one or more archives. Activity-only archives are allowed; each archive must export at least one workflow or activity. New runs use the version returned by the host selector; if that version lacks a requested workflow type, report an unsupported type rather than falling back to an older version. An older run resolves its own version's manifest. The same logical type may appear in different versions, but not in different archives at the same version.
 
 The `list` command prints package ID, string version, digest, and archive path in deterministic lexical order. Ordering never chooses an implementation.
 
-No rescan occurs while a worker is running. Adding a version takes effect after restart. Workers sharing a task queue must receive the same immutable package set; automatic coordination is future work. Expose a version-selector function through plugin options. Its context includes package ID, workflow metadata, and all installed versions. Without a function, only a sole installed version may be selected. Do not implement a deployment server now.
+No rescan occurs while a worker is running. Adding a version takes effect after restart. Workers sharing a task queue must receive the same immutable package set; automatic coordination is future work. Configure client and worker behavior through `WorkerPackagePlugin.newBuilder()`. An empty builder is client-only; setting a package directory enables package dispatch on every worker in the factory. The cache defaults to `.package-cache`. Task queues belong to SDK worker/workflow configuration and are not a plugin setting. Expose a version-selector function through this builder. Its context includes workflow metadata and all available versions. A package ID is not required for selection. A configured `setCurrentVersion` supplies the default for starts that omit a version; a selector callback can supply a dynamic default instead. Without either, only a sole available version may be selected. An explicit client version bypasses this policy. Do not implement a deployment server now.
 
 ### Explicit patch resolution
 
-Optional string `patchesVersion` declares a version in the same package that this archive replaces for execution. A patch archive's filename must be `<packageId>-<patchesVersion>-<packageVersion>.twp`; ordinary archives retain their existing naming behavior. Omit the field for normal packages; null, empty, unsafe, or self-target values are invalid.
+Optional string `patchesVersion` declares a logical version whose matching workflow/activity types this archive replaces for execution. A patch archive's filename must be `<packageId>-<patchesVersion>-<packageVersion>.twp`; ordinary archives retain their existing naming behavior. Omit the field for normal packages; null, empty, unsafe, or self-target values are invalid.
 
-Build a target-to-patch map per package at startup. Reject multiple direct patches for the same target, cycles, and references to installed versions belonging to other package IDs. Global archive-version uniqueness still applies. Follow patch chains to their leaf; ordering and the host selector do not choose between patches.
+Build target-to-patch maps by logical version and workflow/activity type at startup. Reject competing direct patches for the same type and target, and cycles. Patches can use different archive labels; disjoint types can be patched independently at the same version. Follow patch chains to their leaf; ordering and the host selector do not choose between patches.
 
 A previously pinned reference is resolved through this map before strict original archive/checksum lookup. An explicit patch intentionally overrides the original checksum; the effective patch's own bytes are validated and prepared. With no patch edge, exact original version and digest matching remains mandatory. Original archives may be absent. Intermediate patch archives must remain installed to describe chain edges.
 
@@ -156,15 +156,15 @@ Invoke reflected methods with the SDK-decoded arguments and unwrap `InvocationTa
 
 ## 7. External names and durable run selection
 
-External workflow types equal their logical manifest/annotation names, for example `GreetingWorkflow`. The reserved `container.package` workflow start header contains `formatVersion: 1` and `packageId`. Typed and untyped clients use the explicit package header helper. Package identity is never encoded in a workflow or activity type. The header and durable pin protocol is documented in README.md.
+External workflow types equal their logical manifest/annotation names, for example `GreetingWorkflow`. The optional reserved `container.package` workflow start header contains `formatVersion: 1` and an optional `packageVersion`. Typed and untyped clients can register `WorkerPackagePlugin.newBuilder().build()` through `WorkflowClientOptions.setPlugins`; its client hook preserves existing interceptors and leaves version selection to the worker. Ordinary SDK clients without the plugin also work. Client-only plugins require no package files and contribute no worker registrations if propagated to a worker factory. A plugin built with a package directory can instead propagate that worker configuration from the client automatically. Without a version, the worker assigns its configured current version or selector result. `setClientVersion(version)` requests an explicit version without knowing the package ID. Package identity is never encoded in a workflow or activity type. The header and durable pin protocol is documented in README.md.
 
-The dispatcher invokes the plugin options' version selector inside a single `Workflow.sideEffect` callback. Before any application constructor, listener registration, or application command, that callback validates the returned string token, resolves the requested package and version, verifies the workflow type is exported, and returns `[version, archiveDigest]` as a `String[]`.
+The dispatcher invokes the plugin builder's version selector inside a single `Workflow.sideEffect` callback. Before any application constructor, listener registration, or application command, that callback validates the returned string token, resolves the workflow type within the requested version, and returns `[version, archiveDigest, archiveName]` as a `String[]`.
 
 The callback may read host deployment configuration and choose different versions for different new workflows. It must support concurrent calls. It is never evaluated while replaying a recorded pin. The plugin leaves SDK preferred-version providers unchanged; application `Workflow.getVersion` behavior remains host-controlled.
 
 The side effect becomes durable only when the workflow task commits. A failed first task may select another version on its next attempt. Null, invalid, missing, or unsupported selections fail the workflow task without initializing application code or falling back.
 
-On replay, resolve the recorded string version through explicit patch edges first. Without a patch, lookup or digest mismatches must fail the workflow task and permit recovery after restoring the required archive, regardless of the selector. Activities inherit the same full pin in their headers.
+On replay, resolve the recorded string version through explicit patch edges first. Without a patch, lookup or digest mismatches must fail the workflow task and permit recovery after restoring the required archive, regardless of the selector. Activities inherit the logical version and resolve their own archive by activity type; their headers include that archive reference.
 
 This replaces the earlier integer `getVersion` marker plus digest-only side effect. Compatibility with that previous manifest/header/history format is outside this POC; old archives must be rebuilt.
 
@@ -182,9 +182,9 @@ Exercise handlers after a cache eviction or worker restart, not only while the i
 
 ## 9. Version-aware activity dispatch
 
-Applications use ordinary typed or untyped activity stubs with unchanged logical activity names. A workflow outbound interceptor adds the `container.package` header containing formatVersion 1 and the pinned packageId, packageVersion, and full archive sha256. Unrelated header payloads remain intact; conflicting reserved metadata is rejected.
+Applications use ordinary typed or untyped activity stubs with unchanged logical activity names. A workflow outbound interceptor adds the `container.package` header containing formatVersion 1 and the activity archive’s packageId, the pinned logical packageVersion, and full archive sha256. Activities resolve by type and version, so their archive can differ from the workflow archive. Unrelated header payloads remain intact; conflicting reserved metadata is rejected.
 
-For both `executeActivity` and `executeLocalActivity`, preserve argument objects, result class and generic type, options, retry settings, headers, and explicit activity IDs. Use the caller workflow's pinned `PackageRef`. Unknown logical activity names fail clearly; cross-package and independently deployed shared activities are out of scope.
+For both `executeActivity` and `executeLocalActivity`, preserve argument objects, result class and generic type, options, retry settings, headers, and explicit activity IDs. Use the caller workflow's pinned logical version and resolve the activity type's archive reference at that version. Unknown logical activity names fail clearly. Activities may live in a separate archive at the same version; independent activity version selection is out of scope.
 
 The activity inbound interceptor validates the package header and bridges the reference to the host dynamic activity, which uses the unchanged logical type, resolves any explicit patch or otherwise verifies the original package identity and digest, obtains the effective implementation, decodes parameters using that package's reflected types, and invokes the activity under the SDK's activity execution context. Preserve heartbeats, application exceptions, and cancellation. Results pass back through the default converter. Void methods must complete successfully for void callers; the dynamic dispatcher's null-result encoding need not be byte-identical to the SDK's ordinary POJO void encoding.
 
@@ -192,7 +192,7 @@ An activity worker must obtain everything needed for routing from the activity t
 
 ## 10. Errors and diagnostics
 
-Use distinct errors for malformed archives, unsupported manifests or entrypoints, duplicate version identifiers across all package IDs, unknown workflow/activity types, missing versions, digest mismatches, and unsupported features. Include package ID, version, digest where available, and the relevant file or logical type. Avoid logging complete workflow inputs or outputs.
+Use distinct errors for malformed archives, unsupported manifests or entrypoints, duplicate workflow/activity types within a version, unknown workflow/activity types, missing versions, digest mismatches, and unsupported features. Include package ID, version, digest where available, and the relevant file or logical type. Avoid logging complete workflow inputs or outputs.
 
 Startup archive errors fail before polling. Entrypoint errors discovered on first use fail the workflow task; document how to reproduce validation against the affected package. Missing-package failures must remain distinguishable from business exceptions. Do not configure `failWorkflowExceptionTypes(Throwable.class)` or otherwise make every container exception terminal.
 
@@ -202,14 +202,14 @@ Use real `.twp` archives and isolated classpaths. Packaging application classes 
 
 | Test | Required observation |
 | --- | --- |
-| Numeric discovery | Versions 2, 9, and 12 select 12 despite misleading filenames and enumeration order; different package IDs select independently. |
-| Validation | Malformed manifests, duplicate versions, unsafe paths, duplicate classes, bundled host SDK classes, and archive limits produce actionable failures. Empty-directory behavior matches section 4. |
+| Version routing | Configured current version or callback supplies the default; an explicit client version overrides it. Clients require only workflow type and task queue. Archive filenames and lexical ordering never select a version. |
+| Validation | Malformed manifests, duplicate workflow/activity types within a version, unsafe paths, duplicate classes, bundled host SDK classes, and archive limits produce actionable failures. Empty-directory behavior matches section 4. |
 | Declared classpath only | Reject JAR manifest `Class-Path` attributes, including relative paths, absolute `file:` URLs, references to declared JARs, and empty attributes; reject `META-INF/INDEX.LIST`. Place a fixture JAR outside the archive and prove a manifest reference cannot load or initialize its classes. Errors identify the offending declared JAR and metadata before polling. |
 | Packaging | Identical input manifests and JARs produce byte-identical archives and identical digests. |
 | Concurrent versions | Start A while only version 2 is installed. Add version 12 and restart the worker against the same service. A continues on 2 while new run B executes 12 in that same worker JVM. |
 | Class isolation | Both archives contain identical application class names and incompatible versions of a private dependency. Both return their own expected behavior; both use the same host `Workflow.class`. |
 | Shared metrics API | Workflow and activity implementations in both isolated package versions report a metric through their normal SDK execution contexts using the same host Tally/M3 classes, without loader-constraint failures. An archive bundling classes in `com.uber.m3.*` is rejected before polling. |
-| Durable selection | Inspect history to verify the single side-effect marker containing string version and digest precede application commands. Restart with a cold container registry and prepared cache and reproduce A's result. |
+| Durable selection | Inspect history to verify the single side-effect marker containing string version, workflow archive digest, and archive label precedes application commands. Restart with a cold container registry and prepared cache and reproduce A's result. |
 | Replaced archive | After recording A's selection, replace version 2 with different bytes. Replay must report a digest mismatch and must not invoke replacement workflow or activity code. |
 | Missing old version | Remove version 2 while retaining 12. A's workflow task fails for its missing package; B can still run on 12. Restore original version 2, restart, and A resumes on 2. |
 | Activity retry elsewhere | Force an activity attempt on worker process A to fail, stop A, then execute its retry on a fresh worker process B containing the original package and a higher current version. Its unchanged logical type and original package header survive; it uses the original digest and implementation. |

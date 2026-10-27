@@ -97,9 +97,17 @@ public final class PreparedPackageRuntime implements AutoCloseable {
     return found;
   }
 
+  private Descriptor descriptor(PackageRef ref, String type, boolean workflow) {
+    checkOpen();
+    PackageRef effective = catalog.resolveForExecution(ref, type, workflow).ref();
+    Descriptor found = descriptors.get(effective.sha256());
+    if (found == null) throw new PackageRuntimeException("Missing prepared package " + ref);
+    return found;
+  }
+
   Object invokeWorkflow(
       PackageRef ref, String logicalType, EncodedValues args, RunDispatchState state) {
-    Descriptor descriptor = descriptor(ref);
+    Descriptor descriptor = descriptor(ref, logicalType, true);
     WorkflowEntry entry = descriptor.workflow(logicalType);
     state.loader = descriptor.loader;
     return withLoader(
@@ -112,7 +120,7 @@ public final class PreparedPackageRuntime implements AutoCloseable {
   }
 
   Object invokeActivity(PackageRef ref, String logicalType, EncodedValues args) {
-    Descriptor descriptor = descriptor(ref);
+    Descriptor descriptor = descriptor(ref, logicalType, false);
     ActivityEntry entry = descriptor.activity(logicalType);
     return withLoader(
         descriptor.loader,
@@ -138,7 +146,7 @@ public final class PreparedPackageRuntime implements AutoCloseable {
   }
 
   void requireActivity(PackageRef ref, String logicalType) {
-    PackageManifest manifest = catalog.resolveForExecution(ref).manifest();
+    PackageManifest manifest = catalog.resolveForExecution(ref, logicalType, false).manifest();
     if (manifest.activities().stream().noneMatch(e -> e.type().equals(logicalType))) {
       throw new PackageRuntimeException("Activity " + logicalType + " is not exported by " + ref);
     }

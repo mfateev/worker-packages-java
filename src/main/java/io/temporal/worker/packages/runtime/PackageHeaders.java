@@ -30,11 +30,12 @@ public final class PackageHeaders {
 
   private PackageHeaders() {}
 
-  public static Header workflow(Header original, String packageId) {
-    validId(packageId);
+  /** Adds an explicit workflow version without requiring access to an archive. */
+  public static Header workflow(Header original, String version) {
+    PackageRef.validateVersion(version);
     Map<String, Object> metadata = new HashMap<>();
     metadata.put("formatVersion", 1);
-    metadata.put("packageId", packageId);
+    metadata.put("packageVersion", version);
     return merge(original, metadata);
   }
 
@@ -51,9 +52,37 @@ public final class PackageHeaders {
     return merge(original, metadata);
   }
 
+  /** Returns a legacy archive hint, or null for starts using version-only routing. */
   public static String workflowPackageId(Header header) {
-    JsonNode node = read(header, new HashSet<>(Arrays.asList("formatVersion", "packageId")));
-    return node.get("packageId").textValue();
+    JsonNode node = workflowMetadata(header);
+    return node == null || !node.has("packageId") ? null : node.get("packageId").textValue();
+  }
+
+  /** Returns an explicitly requested version, or null to use the worker's current version. */
+  public static String workflowVersion(Header header) {
+    JsonNode node = workflowMetadata(header);
+    if (node == null || !node.has("packageVersion")) return null;
+    JsonNode version = node.get("packageVersion");
+    if (!version.isTextual())
+      throw new PackageRuntimeException("Invalid package version in " + KEY + " header");
+    try {
+      return PackageRef.validateVersion(version.textValue());
+    } catch (IllegalArgumentException failure) {
+      throw new PackageRuntimeException("Invalid package version in " + KEY + " header", failure);
+    }
+  }
+
+  private static JsonNode workflowMetadata(Header header) {
+    if (!header.getValues().containsKey(KEY)) return null;
+    Set<String> fields = new HashSet<>(Arrays.asList("formatVersion"));
+    try {
+      JsonNode node = decode(header.getValues().get(KEY));
+      if (node.has("packageVersion")) fields.add("packageVersion");
+      if (node.has("packageId")) fields.add("packageId");
+      return read(header, fields);
+    } catch (IOException failure) {
+      throw new PackageRuntimeException("Malformed " + KEY + " header JSON", failure);
+    }
   }
 
   public static PackageRef activityRef(Header header) {
@@ -111,10 +140,10 @@ public final class PackageHeaders {
           || !node.get("formatVersion").isIntegralNumber()
           || !node.get("formatVersion").canConvertToInt()
           || node.get("formatVersion").intValue() != 1
-          || !node.get("packageId").isTextual()) {
+          || (expected.contains("packageId") && !node.get("packageId").isTextual())) {
         throw new PackageRuntimeException("Unsupported or malformed " + KEY + " header schema");
       }
-      validId(node.get("packageId").textValue());
+      if (expected.contains("packageId")) validId(node.get("packageId").textValue());
       return node;
     } catch (IOException e) {
       throw new PackageRuntimeException("Malformed " + KEY + " header JSON", e);

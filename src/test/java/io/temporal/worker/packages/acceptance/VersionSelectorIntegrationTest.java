@@ -26,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -53,12 +54,12 @@ public class VersionSelectorIntegrationTest {
     PackageRef newRef = catalog.require("orders", NEW).ref();
     AtomicReference<String> selected = new AtomicReference<>(OLD);
     AtomicInteger selections = new AtomicInteger();
-    WorkerPackagePlugin.Options options =
-        WorkerPackagePlugin.Options.newBuilder()
-            .setVersionSelector(
+    Consumer<WorkerPackagePlugin.Builder> options =
+        builder ->
+            builder.setVersionSelector(
                 context -> {
                   selections.incrementAndGet();
-                  assertEquals("orders", context.getPackageId());
+                  assertNull(context.getPackageId());
                   assertEquals("OrderWorkflow", context.getWorkflowType());
                   assertTrue(context.getWorkflowId().startsWith("opaque-"));
                   assertFalse(context.getRunId().isEmpty());
@@ -66,21 +67,19 @@ public class VersionSelectorIntegrationTest {
                       new HashSet<>(Arrays.asList(OLD, NEW)),
                       new HashSet<>(context.getAvailableVersions()));
                   return selected.get();
-                })
-            .build();
+                });
     String queue = "opaque-selector-" + UUID.randomUUID();
     AtomicInteger replaySelections = new AtomicInteger();
-    WorkerPackagePlugin.Options replayOptions =
-        WorkerPackagePlugin.Options.newBuilder()
-            .setVersionSelector(
+    Consumer<WorkerPackagePlugin.Builder> replayOptions =
+        builder ->
+            builder.setVersionSelector(
                 context -> {
                   replaySelections.incrementAndGet();
                   throw new IllegalStateException("A durable pin must bypass the host selector");
-                })
-            .build();
+                });
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub a = workflow(client, queue, "opaque-old-" + UUID.randomUUID(), "OrderWorkflow");
       WorkflowStub b = workflow(client, queue, "opaque-new-" + UUID.randomUUID(), "OrderWorkflow");
       try (Host first = host(client, packages, temp.resolve("cache-first"), queue, options)) {
@@ -145,21 +144,20 @@ public class VersionSelectorIntegrationTest {
     AtomicReference<String> selected = new AtomicReference<>();
     AtomicInteger selections = new AtomicInteger();
     AtomicInteger unavailableSelections = new AtomicInteger();
-    WorkerPackagePlugin.Options options =
-        WorkerPackagePlugin.Options.newBuilder()
-            .setVersionSelector(
+    Consumer<WorkerPackagePlugin.Builder> options =
+        builder ->
+            builder.setVersionSelector(
                 context -> {
                   selections.incrementAndGet();
                   String version = selected.get();
                   if ("not-installed".equals(version)) unavailableSelections.incrementAndGet();
                   return version;
-                })
-            .build();
+                });
     String queue = "invalid-selector-" + UUID.randomUUID();
     System.clearProperty("fixture.workflow.invoked.v2");
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub run =
           client.newUntypedWorkflowStub(
               "OrderWorkflow",
@@ -227,7 +225,9 @@ public class VersionSelectorIntegrationTest {
           String[] value =
               DefaultDataConverter.STANDARD_INSTANCE.fromPayloads(
                   0, Optional.of(marker.getDetailsOrThrow("data")), String[].class, String[].class);
-          assertArrayEquals(new String[] {expected.packageVersion(), expected.sha256()}, value);
+          assertArrayEquals(
+              new String[] {expected.packageVersion(), expected.sha256(), expected.packageId()},
+              value);
         } else if (marker.getMarkerName().equals("Version")) {
           String change =
               DefaultDataConverter.STANDARD_INSTANCE.fromPayloads(

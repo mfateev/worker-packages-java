@@ -14,15 +14,11 @@ import io.temporal.workflow.Workflow;
 
 final class PackageWorkerInterceptor extends WorkerInterceptorBase {
   private final PreparedPackageRuntime runtime;
-  private final String taskQueue;
   private final WorkerPackagePlugin.VersionSelector versionSelector;
 
   PackageWorkerInterceptor(
-      PreparedPackageRuntime runtime,
-      String taskQueue,
-      WorkerPackagePlugin.VersionSelector versionSelector) {
+      PreparedPackageRuntime runtime, WorkerPackagePlugin.VersionSelector versionSelector) {
     this.runtime = runtime;
-    this.taskQueue = taskQueue;
     this.versionSelector = versionSelector;
   }
 
@@ -37,7 +33,7 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
               @Override
               public <R> ActivityOutput<R> executeActivity(ActivityInput<R> input) {
                 if (!state.managed) return super.executeActivity(input);
-                requirePin(state, input.getActivityName());
+                PackageRef activityRef = activityRef(state, input.getActivityName());
                 return super.executeActivity(
                     new ActivityInput<>(
                         input.getActivityName(),
@@ -46,13 +42,13 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
                         input.getResultType(),
                         input.getArgs(),
                         input.getOptions(),
-                        PackageHeaders.activity(input.getHeader(), state.packageRef)));
+                        PackageHeaders.activity(input.getHeader(), activityRef)));
               }
 
               @Override
               public <R> LocalActivityOutput<R> executeLocalActivity(LocalActivityInput<R> input) {
                 if (!state.managed) return super.executeLocalActivity(input);
-                requirePin(state, input.getActivityName());
+                PackageRef activityRef = activityRef(state, input.getActivityName());
                 return super.executeLocalActivity(
                     new LocalActivityInput<>(
                         input.getActivityName(),
@@ -61,7 +57,7 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
                         input.getResultType(),
                         input.getArgs(),
                         input.getOptions(),
-                        PackageHeaders.activity(input.getHeader(), state.packageRef)));
+                        PackageHeaders.activity(input.getHeader(), activityRef)));
               }
 
               @Override
@@ -90,8 +86,7 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
       @Override
       public WorkflowOutput execute(WorkflowInput input) {
         Object instance = Workflow.getInstance();
-        if (!(instance instanceof ContainerDynamicWorkflow)
-            || !taskQueue.equals(Workflow.getInfo().getTaskQueue())) return super.execute(input);
+        if (!(instance instanceof ContainerDynamicWorkflow)) return super.execute(input);
         ContainerDynamicWorkflow dispatcher = (ContainerDynamicWorkflow) instance;
         runtime.checkOpen();
         if (Workflow.getInfo().getRetryOptions() != null
@@ -102,6 +97,7 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
         }
         state.managed = true;
         state.packageId = PackageHeaders.workflowPackageId(input.getHeader());
+        state.requestedVersion = PackageHeaders.workflowVersion(input.getHeader());
         dispatcher.bind(runtime, state, versionSelector);
         return super.execute(input);
       }
@@ -148,10 +144,20 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
     };
   }
 
-  private void requirePin(RunDispatchState state, String type) {
+  private PackageRef activityRef(RunDispatchState state, String type) {
     if (state.packageRef == null)
       throw new PackageRuntimeException("Activity scheduled before package selection");
-    runtime.requireActivity(state.packageRef, type);
+    PackageRef activity =
+        runtime.catalog().referenceForActivityType(type, state.packageRef.packageVersion());
+    // Preserve the recorded workflow reference when an explicit patch replaces that same archive.
+    if (activity.packageId().equals(state.packageRef.packageId())
+        && !runtime
+            .catalog()
+            .resolveForExecution(activity, type, false)
+            .ref()
+            .packageVersion()
+            .equals(activity.packageVersion())) return state.packageRef;
+    return activity;
   }
 
   private static Runnable scoped(RunDispatchState state, Runnable runnable) {
@@ -168,9 +174,11 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
   public ActivityInboundCallsInterceptor interceptActivity(ActivityInboundCallsInterceptor next) {
     return new ActivityInboundCallsInterceptorBase(next) {
       private boolean managed;
+      private ActivityExecutionContext context;
 
       @Override
       public void init(ActivityExecutionContext context) {
+        this.context = context;
         managed = context.getInstance() instanceof ContainerDynamicActivity;
         super.init(context);
       }
@@ -179,7 +187,7 @@ final class PackageWorkerInterceptor extends WorkerInterceptorBase {
       public ActivityOutput execute(ActivityInput input) {
         if (!managed) return super.execute(input);
         PackageRef ref = PackageHeaders.activityRef(input.getHeader());
-        runtime.catalog().resolveForExecution(ref);
+        runtime.catalog().resolveForExecution(ref, context.getInfo().getActivityType(), false);
         if (input.getArguments().length != 1
             || !(input.getArguments()[0] instanceof EncodedValues)) {
           throw new PackageRuntimeException(

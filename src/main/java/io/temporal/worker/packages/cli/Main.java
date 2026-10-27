@@ -13,7 +13,6 @@ import io.temporal.testserver.TestServer;
 import io.temporal.worker.WorkerFactory;
 import io.temporal.worker.WorkerFactoryOptions;
 import io.temporal.worker.packages.api.PackageRef;
-import io.temporal.worker.packages.runtime.PackageClientInterceptor;
 import io.temporal.worker.packages.runtime.WorkerPackagePlugin;
 import io.temporal.worker.packages.tooling.PackageCatalog;
 import io.temporal.worker.packages.tooling.PackagePackager;
@@ -47,7 +46,7 @@ public final class Main {
               + "  validate   --archive FILE\n"
               + "  pack       --manifest FILE --input-root DIR --output FILE\n"
               + "  worker     --packages DIR --cache DIR [--package-version VERSION] --endpoint HOST:PORT --namespace NS --task-queue Q\n"
-              + "  start      --package-id ID --type TYPE --workflow-id ID --input '[arguments]'\n"
+              + "  start      [--package-version VERSION] --type TYPE --workflow-id ID --input '[arguments]'\n"
               + "  signal     --workflow-id ID --name SIGNAL --input '[arguments]'\n"
               + "  query      --workflow-id ID --name QUERY --input '[arguments]'\n"
               + "  update     --workflow-id ID --name UPDATE --input '[arguments]'\n"
@@ -120,18 +119,17 @@ public final class Main {
 
   private static void worker(Options options) throws Exception {
     String queue = options.get("task-queue", "TEMPORAL_TASK_QUEUE", "workflow-packages");
-    WorkerPackagePlugin.Options.Builder pluginOptions = WorkerPackagePlugin.Options.newBuilder();
+    WorkerPackagePlugin.Builder pluginBuilder =
+        WorkerPackagePlugin.newBuilder()
+            .setPackagesDirectory(options.path("packages", "TEMPORAL_PACKAGES", "packages"))
+            .setCacheDirectory(
+                options.path("cache", "TEMPORAL_PACKAGE_CACHE_DIR", ".package-cache"));
     String version = options.get("package-version", "TEMPORAL_PACKAGE_VERSION", null);
     if (version != null) {
       PackageRef.validateVersion(version);
-      pluginOptions.setVersionSelector(context -> version);
+      pluginBuilder.setCurrentVersion(version);
     }
-    WorkerPackagePlugin plugin =
-        WorkerPackagePlugin.open(
-            options.path("packages", "TEMPORAL_PACKAGES", "packages"),
-            options.path("cache", "TEMPORAL_PACKAGE_CACHE_DIR", ".package-cache"),
-            queue,
-            pluginOptions.build());
+    WorkerPackagePlugin plugin = pluginBuilder.build();
     WorkflowServiceStubs service = null;
     WorkerFactory factory = null;
     Thread hook = null;
@@ -251,11 +249,13 @@ public final class Main {
   }
 
   private static void client(String command, Options options) throws Exception {
-    String packageId = command.equals("start") ? options.required("package-id") : null;
+    String version =
+        command.equals("start")
+            ? options.get("package-version", "TEMPORAL_PACKAGE_VERSION", null)
+            : null;
     WorkflowServiceStubs service = service(options);
     try {
-      WorkflowClient client =
-          WorkflowClient.newInstance(service, clientOptions(options, packageId));
+      WorkflowClient client = WorkflowClient.newInstance(service, clientOptions(options, version));
       String workflowId = options.required("workflow-id");
       Object[] arguments = JSON.readValue(options.get("input", null, "[]"), Object[].class);
       if (command.equals("start")) {
@@ -316,11 +316,14 @@ public final class Main {
             .build());
   }
 
-  private static WorkflowClientOptions clientOptions(Options options, String packageId) {
+  private static WorkflowClientOptions clientOptions(Options options, String version)
+      throws java.io.IOException {
     WorkflowClientOptions.Builder builder =
         WorkflowClientOptions.newBuilder()
             .setNamespace(options.get("namespace", "TEMPORAL_NAMESPACE", "default"));
-    if (packageId != null) builder.setInterceptors(new PackageClientInterceptor(packageId));
+    WorkerPackagePlugin.Builder plugin = WorkerPackagePlugin.newBuilder();
+    if (version != null) plugin.setClientVersion(version);
+    builder.setPlugins(plugin.build());
     return builder.build();
   }
 
@@ -344,7 +347,6 @@ public final class Main {
                     "manifest",
                     "input-root",
                     "output",
-                    "package-id",
                     "package-version",
                     "type",
                     "workflow-id",

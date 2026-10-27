@@ -36,7 +36,7 @@ public class PrivateJacksonIntegrationTest {
     String queue = "private-jackson-" + UUID.randomUUID();
     try (io.temporal.testing.TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      io.temporal.client.WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      io.temporal.client.WorkflowClient client = client(env.getWorkflowServiceStubs());
       try (io.temporal.worker.packages.acceptance.IntegrationSupport.Host host =
           host(client, packages, temp.resolve("cache"), queue)) {
         io.temporal.worker.packages.api.PackageRef ref =

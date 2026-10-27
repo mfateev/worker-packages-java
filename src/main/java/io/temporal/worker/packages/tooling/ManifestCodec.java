@@ -89,7 +89,9 @@ public final class ManifestCodec {
         classpath.add(path);
       }
       List<PackageManifest.Entrypoint> workflows = entrypoints(n.get("workflows"), "workflows");
-      if (workflows.isEmpty()) throw new PackageException("At least one workflow is required");
+      List<PackageManifest.Entrypoint> activities = entrypoints(n.get("activities"), "activities");
+      if (workflows.isEmpty() && activities.isEmpty())
+        throw new PackageException("At least one workflow or activity is required");
       return new PackageManifest(
           format,
           api,
@@ -99,7 +101,7 @@ public final class ManifestCodec {
           encoding,
           classpath,
           workflows,
-          entrypoints(n.get("activities"), "activities"),
+          activities,
           patchesVersion);
     } catch (IOException e) {
       throw new PackageException("Malformed manifest JSON: " + e.getMessage(), e);

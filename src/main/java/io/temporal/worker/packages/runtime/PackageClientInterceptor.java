@@ -4,13 +4,16 @@ import io.temporal.common.interceptors.WorkflowClientCallsInterceptor;
 import io.temporal.common.interceptors.WorkflowClientCallsInterceptorBase;
 import io.temporal.common.interceptors.WorkflowClientInterceptorBase;
 
-/** Opt-in client adapter; use a separate instance/client for each package ID. */
+/** Client adapter for worker-assigned or explicit workflow versions. No archives are required. */
 public final class PackageClientInterceptor extends WorkflowClientInterceptorBase {
-  private final String packageId;
+  private final String version;
 
-  public PackageClientInterceptor(String packageId) {
-    PackageHeaders.validId(packageId);
-    this.packageId = packageId;
+  public PackageClientInterceptor() {
+    this.version = null;
+  }
+
+  public PackageClientInterceptor(String version) {
+    this.version = io.temporal.worker.packages.api.PackageRef.validateVersion(version);
   }
 
   @Override
@@ -27,7 +30,9 @@ public final class PackageClientInterceptor extends WorkflowClientInterceptorBas
         return new WorkflowStartInput(
             input.getWorkflowId(),
             input.getWorkflowType(),
-            PackageHeaders.workflow(input.getHeader(), packageId),
+            version == null
+                ? input.getHeader()
+                : PackageHeaders.workflow(input.getHeader(), version),
             input.getArguments(),
             input.getOptions());
       }

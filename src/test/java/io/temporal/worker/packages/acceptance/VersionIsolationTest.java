@@ -105,7 +105,7 @@ public class VersionIsolationTest {
 
               @Override
               public WorkflowOutput execute(WorkflowInput input) {
-                assertTrue(input.getHeader().getValues().containsKey(FixtureCompiler.HEADER));
+                assertFalse(input.getHeader().getValues().containsKey(FixtureCompiler.HEADER));
                 observed.incrementAndGet();
                 return super.execute(input);
               }
@@ -114,7 +114,7 @@ public class VersionIsolationTest {
         };
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub a = workflow(client, queue, "old-" + UUID.randomUUID(), "OrderWorkflow");
       try (Host host = host(client, packages, temp.resolve("cache-a"), queue, observer)) {
         host.start();
@@ -208,7 +208,7 @@ public class VersionIsolationTest {
     Files.copy(FixtureCompiler.build(temp.resolve("fixtures"), 2), packages.resolve("orders.twp"));
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       String queue = "payloads-" + UUID.randomUUID();
       WorkflowExecutionHistory localHistory;
       try (Host host = host(client, packages, temp.resolve("cache"), queue)) {
@@ -281,8 +281,8 @@ public class VersionIsolationTest {
     Files.copy(FixtureCompiler.build(fixtures, 2, "orders"), packages.resolve("orders.twp"));
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient orders = client(env.getWorkflowServiceStubs(), "orders");
-      WorkflowClient billing = client(env.getWorkflowServiceStubs(), "billing");
+      WorkflowClient orders = client(env.getWorkflowServiceStubs());
+      WorkflowClient billing = client(env.getWorkflowServiceStubs());
       String queue = "same-name-" + UUID.randomUUID();
       WorkflowStub a = workflow(orders, queue, "orders-" + UUID.randomUUID(), "OrderWorkflow");
       try (Host first = host(orders, packages, temp.resolve("cache-original"), queue)) {
@@ -321,7 +321,7 @@ public class VersionIsolationTest {
     String queue = "recover-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowExecutionHistory history;
       try (Host host = host(client, packages, temp.resolve("initial-cache"), queue)) {
         host.start();
@@ -339,7 +339,8 @@ public class VersionIsolationTest {
         Exception error =
             assertThrows(Exception.class, () -> replay.worker.replayWorkflowExecution(history));
         assertTrue(
-            failureText(error), failureText(error).contains("Missing package version orders/2"));
+            failureText(error),
+            failureText(error).contains("Missing workflow type OrderWorkflow for version 2"));
         assertNull(System.getProperty("fixture.workflow.invoked.v2"));
         assertNull(System.getProperty("fixture.workflow.invoked.v12"));
       }
@@ -387,7 +388,7 @@ public class VersionIsolationTest {
     String queue = "first-task-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub run =
           workflow(client, queue, "uncommitted-" + UUID.randomUUID(), "OrderWorkflow");
       try (Host host = host(client, packages, temp.resolve("cache-before-commit"), queue)) {
@@ -435,7 +436,7 @@ public class VersionIsolationTest {
     String queue = "live-recovery-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub old =
           workflow(client, queue, "durably-pinned-" + UUID.randomUUID(), "OrderWorkflow");
       try (Host host = host(client, packages, temp.resolve("cache-initial"), queue)) {
@@ -489,7 +490,7 @@ public class VersionIsolationTest {
     String queue = "failure-semantics-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       try (Host host = host(client, packages, temp.resolve("cache"), queue)) {
         host.start();
         WorkflowStub business =
@@ -534,7 +535,7 @@ public class VersionIsolationTest {
       env.start();
       for (String packageId : java.util.Arrays.asList("orders", "billing")) {
         if (packageId.equals("billing")) Files.copy(newer, packages.resolve("billing.twp"));
-        WorkflowClient client = client(env.getWorkflowServiceStubs(), packageId);
+        WorkflowClient client = client(env.getWorkflowServiceStubs());
         String queue = "singleton-" + UUID.randomUUID();
         try (Host host = host(client, packages, temp.resolve("cache-" + packageId), queue)) {
           host.start();
@@ -562,7 +563,7 @@ public class VersionIsolationTest {
     String queue = "unsupported-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       try (Host host = host(client, packages, temp.resolve("cache"), queue)) {
         host.start();
         for (String operation : java.util.Arrays.asList("child", "continue")) {
@@ -608,7 +609,7 @@ public class VersionIsolationTest {
         new ActivityContractInterceptor();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       try (Host host = host(client, packages, temp.resolve("cache"), queue, contract)) {
         host.start();
         for (boolean local : java.util.Arrays.asList(false, true)) {
@@ -670,7 +671,7 @@ public class VersionIsolationTest {
     String queue = "local-restart-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       WorkflowStub old = workflow(client, queue, "local-old-" + UUID.randomUUID(), "OrderWorkflow");
       try (Host first = host(client, packages, temp.resolve("cache-old-local"), queue)) {
         first.start();
@@ -707,7 +708,7 @@ public class VersionIsolationTest {
     String queue = "untyped-exports-" + UUID.randomUUID();
     try (TestWorkflowEnvironment env = TestServices.environment()) {
       env.start();
-      WorkflowClient client = client(env.getWorkflowServiceStubs(), "orders");
+      WorkflowClient client = client(env.getWorkflowServiceStubs());
       try (io.temporal.worker.packages.acceptance.IntegrationSupport.Host host =
           host(client, packages, temp.resolve("cache"), queue)) {
         host.start();
@@ -730,7 +731,7 @@ public class VersionIsolationTest {
           assertTrue(
               rejected
                   .getResult(20, TimeUnit.SECONDS, String.class)
-                  .contains("Activity NotExported is not exported"));
+                  .contains("Missing activity type NotExported for version"));
           List<HistoryEvent> events =
               client.fetchHistory(rejected.getExecution().getWorkflowId()).getEvents();
           assertFalse(
@@ -772,13 +773,11 @@ public class VersionIsolationTest {
     assertEquals(
         "OrderWorkflow",
         started.getWorkflowExecutionStartedEventAttributes().getWorkflowType().getName());
-    JsonNode startHeader =
-        json(
-            started
-                .getWorkflowExecutionStartedEventAttributes()
-                .getHeader()
-                .getFieldsOrThrow(FixtureCompiler.HEADER));
-    assertEquals("orders", startHeader.get("packageId").asText());
+    assertFalse(
+        started
+            .getWorkflowExecutionStartedEventAttributes()
+            .getHeader()
+            .containsFields(FixtureCompiler.HEADER));
     long pinMarker = Long.MAX_VALUE;
     boolean applicationPatchObserved = false;
     for (HistoryEvent event : history.getEvents()) {
@@ -812,7 +811,7 @@ public class VersionIsolationTest {
                   java.util.Optional.of(details.getDetailsOrThrow("data")),
                   String[].class,
                   String[].class);
-          assertArrayEquals(new String[] {Integer.toString(version), digest}, pin);
+          assertArrayEquals(new String[] {Integer.toString(version), digest, "orders"}, pin);
         }
       }
       if (event.getEventType() == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED) {

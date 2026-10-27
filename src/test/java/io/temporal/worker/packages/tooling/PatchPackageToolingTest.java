@@ -112,7 +112,8 @@ public class PatchPackageToolingTest {
   }
 
   @Test
-  public void catalogRejectsConflictingPatchesCyclesAndCrossPackageTargets() throws IOException {
+  public void catalogRejectsConflictingTypesAndCyclesButAllowsPatchesAcrossArchiveNames()
+      throws IOException {
     Path conflicting = temporary.newFolder("conflicting").toPath();
     pack("orders", "fix-1", "base", conflicting);
     pack("orders", "fix-2", "base", conflicting);
@@ -130,17 +131,20 @@ public class PatchPackageToolingTest {
     Path crossPackage = temporary.newFolder("cross-package").toPath();
     pack("billing", "base", null, crossPackage);
     pack("orders", "fix-1", "base", crossPackage);
-    assertTrue(
-        assertThrows(PackageException.class, () -> PackageCatalog.scan(crossPackage))
-            .getMessage()
-            .contains("another package"));
+    PackageCatalog cross = PackageCatalog.scan(crossPackage);
+    assertEquals(
+        "orders",
+        cross
+            .resolveForExecution(cross.require("billing", "base").ref(), "Workflow", true)
+            .ref()
+            .packageId());
     Path duplicate = temporary.newFolder("duplicate-global-version").toPath();
     pack("orders", "same", null, duplicate);
     pack("billing", "same", "base", duplicate);
     assertTrue(
         assertThrows(PackageException.class, () -> PackageCatalog.scan(duplicate))
             .getMessage()
-            .contains("Duplicate package version"));
+            .contains("Duplicate workflow type"));
   }
 
   @Test

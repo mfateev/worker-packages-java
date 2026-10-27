@@ -50,7 +50,6 @@
     },
     "workflows": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -96,5 +95,21 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
       "description": "Optional version this patch explicitly replaces. It must differ from packageVersion."
     }
-  }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "workflows": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "properties": {
+        "activities": {
+          "minItems": 1
+        }
+      }
+    }
+  ]
 }

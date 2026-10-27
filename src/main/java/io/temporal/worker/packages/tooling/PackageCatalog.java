@@ -9,70 +9,53 @@ import java.util.stream.Stream;
 
 /** Immutable validated startup snapshot; lookup methods never perform I/O. */
 public final class PackageCatalog {
-  private final NavigableMap<String, NavigableMap<String, ValidatedPackage>> packages;
   private final List<ValidatedPackage> entries;
-  private final NavigableMap<String, ValidatedPackage> versions;
-  private final Map<String, Map<String, ValidatedPackage>> patches;
+  private final NavigableSet<String> versions = new TreeSet<>();
+  private final NavigableSet<String> available = new TreeSet<>();
+  private final Map<String, Map<String, ValidatedPackage>> workflows;
+  private final Map<String, Map<String, ValidatedPackage>> activities;
+  private final Map<String, Map<String, ValidatedPackage>> workflowPatches;
+  private final Map<String, Map<String, ValidatedPackage>> activityPatches;
 
   private PackageCatalog(List<ValidatedPackage> validated) {
-    TreeMap<String, NavigableMap<String, ValidatedPackage>> mutable = new TreeMap<>();
-    TreeMap<String, ValidatedPackage> allVersions = new TreeMap<>();
-    for (ValidatedPackage p : validated) {
-      ValidatedPackage duplicate = allVersions.putIfAbsent(p.ref().packageVersion(), p);
-      if (duplicate != null)
-        throw new PackageException(
-            "Duplicate package version "
-                + p.ref().packageVersion()
-                + ": "
-                + duplicate.ref().packageId()
-                + " ("
-                + duplicate.archive()
-                + ") and "
-                + p.ref().packageId()
-                + " ("
-                + p.archive()
-                + ")");
-      NavigableMap<String, ValidatedPackage> versions =
-          mutable.computeIfAbsent(p.ref().packageId(), ignored -> new TreeMap<>());
-      versions.put(p.ref().packageVersion(), p);
+    entries = Collections.unmodifiableList(new ArrayList<>(validated));
+    workflows = index(true, false);
+    activities = index(false, false);
+    workflowPatches = index(true, true);
+    activityPatches = index(false, true);
+    for (String version : available) {
+      for (String type : types(version, true)) effective(type, version, true);
+      for (String type : types(version, false)) effective(type, version, false);
     }
-    Map<String, Map<String, ValidatedPackage>> replacements = new TreeMap<>();
-    for (ValidatedPackage patch : validated) {
-      String target = patch.manifest().patchesVersion();
-      if (target == null) continue;
-      Map<String, ValidatedPackage> targets =
-          replacements.computeIfAbsent(patch.ref().packageId(), ignored -> new TreeMap<>());
-      ValidatedPackage previous = targets.putIfAbsent(target, patch);
-      if (previous != null)
-        throw new PackageException(
-            "Multiple patches for "
-                + patch.ref().packageId()
-                + "/"
-                + target
-                + ": "
-                + previous.archive()
-                + " and "
-                + patch.archive());
+  }
+
+  private Map<String, Map<String, ValidatedPackage>> index(boolean workflow, boolean patch) {
+    Map<String, Map<String, ValidatedPackage>> result = new TreeMap<>();
+    for (ValidatedPackage archive : entries) {
+      String version = patch ? archive.manifest().patchesVersion() : archive.ref().packageVersion();
+      if (version == null) continue;
+      available.add(version);
+      if (!patch) versions.add(version);
+      Map<String, ValidatedPackage> declarations =
+          result.computeIfAbsent(version, ignored -> new TreeMap<>());
+      for (PackageManifest.Entrypoint entry :
+          workflow ? archive.manifest().workflows() : archive.manifest().activities()) {
+        ValidatedPackage previous = declarations.putIfAbsent(entry.type(), archive);
+        if (previous != null)
+          throw new PackageException(
+              (patch ? "Multiple patches for " : "Duplicate ")
+                  + (workflow ? "workflow" : "activity")
+                  + " type "
+                  + entry.type()
+                  + " for version "
+                  + version
+                  + ": "
+                  + previous.archive()
+                  + " and "
+                  + archive.archive());
+      }
     }
-    for (ValidatedPackage patch : validated) {
-      String target = patch.manifest().patchesVersion();
-      if (target == null) continue;
-      ValidatedPackage physicalTarget = allVersions.get(target);
-      if (physicalTarget != null
-          && !physicalTarget.ref().packageId().equals(patch.ref().packageId()))
-        throw new PackageException(
-            "Patch "
-                + patch.ref()
-                + " targets a version installed for another package: "
-                + physicalTarget.ref());
-      effectivePatch(replacements.get(patch.ref().packageId()), target);
-    }
-    replacements.replaceAll((id, targets) -> Collections.unmodifiableMap(targets));
-    patches = Collections.unmodifiableMap(replacements);
-    mutable.replaceAll((key, value) -> Collections.unmodifiableNavigableMap(value));
-    packages = Collections.unmodifiableNavigableMap(mutable);
-    versions = Collections.unmodifiableNavigableMap(allVersions);
-    entries = Collections.unmodifiableList(new ArrayList<>(allVersions.values()));
+    return result;
   }
 
   public static PackageCatalog scan(Path directory) {
@@ -102,14 +85,13 @@ public final class PackageCatalog {
 
   /** Returns deterministic, distinct physical versions and logical patch-target aliases. */
   public List<String> selectionVersions() {
-    Set<String> available = new TreeSet<>(versions.keySet());
-    for (Map<String, ValidatedPackage> targets : patches.values())
-      available.addAll(targets.keySet());
     return Collections.unmodifiableList(new ArrayList<>(available));
   }
 
   public Set<String> packageIds() {
-    return packages.navigableKeySet();
+    Set<String> ids = new TreeSet<>();
+    for (ValidatedPackage archive : entries) ids.add(archive.ref().packageId());
+    return Collections.unmodifiableSet(ids);
   }
 
   public boolean isEmpty() {
@@ -117,24 +99,27 @@ public final class PackageCatalog {
   }
 
   public List<String> versions(String packageId) {
-    return Collections.unmodifiableList(new ArrayList<>(requireVersions(packageId).keySet()));
+    Set<String> found = new TreeSet<>();
+    for (ValidatedPackage archive : entries)
+      if (archive.ref().packageId().equals(packageId)) found.add(archive.ref().packageVersion());
+    if (found.isEmpty()) throw new PackageException("Missing package ID: " + packageId);
+    return Collections.unmodifiableList(new ArrayList<>(found));
   }
 
-  /** Returns the sole globally installed version; versions have no implicit ordering. */
   public String currentVersion(String packageId) {
-    requireVersions(packageId);
+    versions(packageId);
     return currentVersion();
   }
 
-  /** Returns the sole globally installed version, failing when a selection is ambiguous. */
+  /** Returns the sole installed version; archive count does not affect selection. */
   public String currentVersion() {
     if (versions.isEmpty()) throw new PackageException("No packages installed");
     if (versions.size() != 1)
       throw new PackageException(
           "Multiple package versions installed: "
-              + versions.keySet()
+              + versions
               + "; specify a package version explicitly when starting a workflow");
-    return versions.firstKey();
+    return versions.first();
   }
 
   public ValidatedPackage require(String packageId, int version) {
@@ -143,60 +128,134 @@ public final class PackageCatalog {
 
   public ValidatedPackage require(String packageId, String version) {
     PackageRef.validateVersion(version);
-    ValidatedPackage p = requireVersions(packageId).get(version);
-    if (p == null)
+    ValidatedPackage found = null;
+    for (ValidatedPackage archive : entries) {
+      if (!archive.ref().packageId().equals(packageId)
+          || !archive.ref().packageVersion().equals(version)) continue;
+      if (found != null)
+        throw new PackageException("Ambiguous archive identity " + packageId + "/" + version);
+      found = archive;
+    }
+    if (found == null)
       throw new PackageException("Missing package version " + packageId + "/" + version);
-    return p;
+    return found;
   }
 
   public ValidatedPackage require(PackageRef ref) {
-    ValidatedPackage p = require(ref.packageId(), ref.packageVersion());
-    if (!p.ref().sha256().equals(ref.sha256()))
-      throw new PackageException("Package digest mismatch: required " + ref + ", found " + p.ref());
-    return p;
+    for (ValidatedPackage archive : entries) if (archive.ref().equals(ref)) return archive;
+    ValidatedPackage found = require(ref.packageId(), ref.packageVersion());
+    throw new PackageException(
+        "Package digest mismatch: required " + ref + ", found " + found.ref());
   }
 
-  /**
-   * Resolves an explicit patch before requiring the original archive or its pinned checksum.
-   * Unpatched executions retain strict archive and digest matching.
-   */
+  /** Resolves an archive reference for callers that do not have a workflow/activity type. */
   public ValidatedPackage resolveForExecution(PackageRef pinned) {
-    ValidatedPackage replacement = patch(pinned.packageId(), pinned.packageVersion());
-    return replacement == null ? require(pinned) : replacement;
-  }
-
-  /** Returns a durable logical reference, including when only its patch is installed. */
-  public PackageRef referenceForWorkflow(String packageId, String requestedVersion) {
-    PackageRef.validateVersion(requestedVersion);
-    ValidatedPackage original = requireVersions(packageId).get(requestedVersion);
-    if (original != null) return original.ref();
-    ValidatedPackage replacement = patch(packageId, requestedVersion);
-    if (replacement != null)
-      return new PackageRef(packageId, requestedVersion, replacement.ref().sha256());
-    return require(packageId, requestedVersion).ref();
-  }
-
-  private ValidatedPackage patch(String packageId, String target) {
-    return effectivePatch(patches.get(packageId), target);
-  }
-
-  private static ValidatedPackage effectivePatch(
-      Map<String, ValidatedPackage> targets, String target) {
-    if (targets == null) return null;
-    Set<String> visited = new LinkedHashSet<>();
-    ValidatedPackage effective = null;
-    while (targets.containsKey(target)) {
-      if (!visited.add(target))
-        throw new PackageException("Patch cycle detected: " + visited + " -> " + target);
-      effective = targets.get(target);
-      target = effective.ref().packageVersion();
+    ValidatedPackage found = null;
+    for (boolean workflow : new boolean[] {true, false}) {
+      for (String type : types(pinned.packageVersion(), workflow)) {
+        PackageRef reference = referenceForType(type, pinned.packageVersion(), workflow);
+        if (!reference.packageId().equals(pinned.packageId())) continue;
+        if (get(patchIndex(workflow), pinned.packageVersion(), type) == null) continue;
+        ValidatedPackage replacement = effective(type, pinned.packageVersion(), workflow);
+        if (found != null && found != replacement)
+          throw new PackageException(
+              "Archive has multiple type-specific patches; resolve by type: " + pinned);
+        found = replacement;
+      }
     }
-    return effective;
+    return found == null ? require(pinned) : found;
   }
 
-  private NavigableMap<String, ValidatedPackage> requireVersions(String packageId) {
-    NavigableMap<String, ValidatedPackage> versions = packages.get(packageId);
-    if (versions == null) throw new PackageException("Missing package ID: " + packageId);
-    return versions;
+  /** Resolves a type using explicit patches before checking the original checksum. */
+  public ValidatedPackage resolveForExecution(PackageRef pinned, String type, boolean workflow) {
+    ValidatedPackage selected = effective(type, pinned.packageVersion(), workflow);
+    if (get(patchIndex(workflow), pinned.packageVersion(), type) == null
+        && !selected.ref().equals(pinned))
+      throw new PackageException(
+          "Package digest mismatch: required " + pinned + ", found " + selected.ref());
+    return selected;
+  }
+
+  /** Legacy archive lookup; normal workflow routing uses type and version. */
+  public PackageRef referenceForWorkflow(String packageId, String requestedVersion) {
+    for (ValidatedPackage archive : entries)
+      if (archive.ref().packageId().equals(packageId)
+          && archive.ref().packageVersion().equals(requestedVersion))
+        return require(packageId, requestedVersion).ref();
+    PackageRef found = null;
+    for (String type : types(requestedVersion, true)) {
+      PackageRef ref = referenceForWorkflowType(type, requestedVersion);
+      if (!ref.packageId().equals(packageId)) continue;
+      if (found != null && !found.equals(ref))
+        throw new PackageException("Ambiguous archive identity " + packageId);
+      found = ref;
+    }
+    if (found == null)
+      throw new PackageException("Missing package version " + packageId + "/" + requestedVersion);
+    return found;
+  }
+
+  public PackageRef referenceForWorkflowType(String type, String version) {
+    return referenceForType(type, version, true);
+  }
+
+  public PackageRef referenceForActivityType(String type, String version) {
+    return referenceForType(type, version, false);
+  }
+
+  private PackageRef referenceForType(String type, String version, boolean workflow) {
+    PackageRef.validateVersion(version);
+    ValidatedPackage selected = effective(type, version, workflow);
+    ValidatedPackage original = get(physicalIndex(workflow), version, type);
+    return original == null
+        ? new PackageRef(selected.ref().packageId(), version, selected.ref().sha256())
+        : original.ref();
+  }
+
+  private ValidatedPackage effective(String type, String version, boolean workflow) {
+    Set<String> visited = new LinkedHashSet<>();
+    String requested = version;
+    while (true) {
+      if (!visited.add(version))
+        throw new PackageException(
+            "Patch cycle detected for " + type + ": " + visited + " -> " + version);
+      ValidatedPackage replacement = get(patchIndex(workflow), version, type);
+      if (replacement == null) {
+        ValidatedPackage selected = get(physicalIndex(workflow), version, type);
+        if (selected == null)
+          throw new PackageException(
+              "Missing "
+                  + (workflow ? "workflow" : "activity")
+                  + " type "
+                  + type
+                  + " for version "
+                  + requested);
+        return selected;
+      }
+      version = replacement.ref().packageVersion();
+    }
+  }
+
+  private Set<String> types(String version, boolean workflow) {
+    Set<String> types = new TreeSet<>();
+    Map<String, ValidatedPackage> physical = physicalIndex(workflow).get(version);
+    Map<String, ValidatedPackage> patched = patchIndex(workflow).get(version);
+    if (physical != null) types.addAll(physical.keySet());
+    if (patched != null) types.addAll(patched.keySet());
+    return types;
+  }
+
+  private Map<String, Map<String, ValidatedPackage>> physicalIndex(boolean workflow) {
+    return workflow ? workflows : activities;
+  }
+
+  private Map<String, Map<String, ValidatedPackage>> patchIndex(boolean workflow) {
+    return workflow ? workflowPatches : activityPatches;
+  }
+
+  private static ValidatedPackage get(
+      Map<String, Map<String, ValidatedPackage>> index, String version, String type) {
+    Map<String, ValidatedPackage> declarations = index.get(version);
+    return declarations == null ? null : declarations.get(type);
   }
 }

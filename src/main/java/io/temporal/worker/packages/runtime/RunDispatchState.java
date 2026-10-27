@@ -5,6 +5,7 @@ import io.temporal.worker.packages.api.PackageRef;
 /** Owned by exactly one SDK workflow reconstruction, including its workflow threads. */
 final class RunDispatchState {
   String packageId;
+  String requestedVersion;
   PackageRef packageRef;
   volatile ClassLoader loader;
   boolean managed;

@@ -1,12 +1,14 @@
 package io.temporal.worker.packages.runtime;
 
+import io.temporal.client.WorkflowClientOptions;
+import io.temporal.common.SimplePlugin;
 import io.temporal.common.WorkflowExecutionHistory;
 import io.temporal.common.interceptors.WorkerInterceptor;
+import io.temporal.common.interceptors.WorkflowClientInterceptor;
 import io.temporal.worker.Worker;
 import io.temporal.worker.WorkerFactory;
 import io.temporal.worker.WorkerFactoryOptions;
 import io.temporal.worker.WorkerOptions;
-import io.temporal.worker.WorkerPlugin;
 import io.temporal.worker.packages.tooling.PackageCatalog;
 import io.temporal.worker.packages.tooling.PackageManifest;
 import io.temporal.worker.packages.tooling.ValidatedPackage;
@@ -24,48 +26,47 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Worker-only plugin. Each instance owns one prepared runtime and one worker factory. */
-public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
+/** Client and worker plugin. Worker instances own one prepared runtime and one worker factory. */
+public final class WorkerPackagePlugin extends SimplePlugin implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(WorkerPackagePlugin.class);
   private final PreparedPackageRuntime runtime;
-  private final String taskQueue;
   private final String diagnostics;
-  private final Options options;
+  private final VersionSelector versionSelector;
+  private final String currentVersion;
+  private final boolean customSelector;
+  private final String clientVersion;
   private boolean configured;
   private WorkerFactory owner;
   private int activeReplays;
   private boolean cleanupScheduled;
 
-  public static WorkerPackagePlugin open(Path packages, Path cache, String taskQueue)
-      throws IOException {
-    return open(packages, cache, taskQueue, Options.newBuilder().build());
+  private WorkerPackagePlugin(Builder builder) throws IOException {
+    super("io.temporal.worker-packages");
+    if (builder.packagesDirectory == null
+        && (builder.cacheDirectory != null || builder.workerPolicyConfigured))
+      throw new IllegalArgumentException("Worker configuration requires a package directory");
+    versionSelector = builder.versionSelector;
+    currentVersion = builder.currentVersion;
+    customSelector = builder.customSelector;
+    clientVersion = builder.clientVersion;
+    runtime =
+        builder.packagesDirectory == null
+            ? null
+            : PreparedPackageRuntime.open(
+                builder.packagesDirectory,
+                builder.cacheDirectory == null
+                    ? java.nio.file.Paths.get(".package-cache")
+                    : builder.cacheDirectory);
+    diagnostics =
+        runtime == null
+            ? "WorkerPackagePlugin{clientOnly=true, version="
+                + (clientVersion == null ? "workerAssigned" : clientVersion)
+                + "}"
+            : describe(runtime.catalog(), currentVersion, customSelector);
   }
 
-  public static WorkerPackagePlugin open(
-      Path packages, Path cache, String taskQueue, Options options) throws IOException {
-    Objects.requireNonNull(options, "options");
-    validateTaskQueue(taskQueue);
-    return new WorkerPackagePlugin(
-        PreparedPackageRuntime.open(packages, cache), taskQueue, options);
-  }
-
-  public WorkerPackagePlugin(PreparedPackageRuntime runtime, String taskQueue) {
-    this(runtime, taskQueue, Options.newBuilder().build());
-  }
-
-  public WorkerPackagePlugin(PreparedPackageRuntime runtime, String taskQueue, Options options) {
-    this.runtime = Objects.requireNonNull(runtime, "runtime");
-    this.taskQueue = validateTaskQueue(taskQueue);
-    this.options = Objects.requireNonNull(options, "options");
-    runtime.checkOpen();
-    diagnostics = describe(runtime.catalog(), taskQueue, options);
-  }
-
-  private static String validateTaskQueue(String taskQueue) {
-    Objects.requireNonNull(taskQueue, "taskQueue");
-    if (taskQueue.codePoints().allMatch(Character::isWhitespace))
-      throw new IllegalArgumentException("Task queue must not be blank");
-    return taskQueue;
+  public static Builder newBuilder() {
+    return new Builder();
   }
 
   /** Selects an installed version when a new workflow records its durable package pin. */
@@ -87,6 +88,7 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
       this.availableVersions = catalog.selectionVersions();
     }
 
+    /** Returns a legacy header hint, or null for ordinary/version-only client starts. */
     public String getPackageId() {
       return packageId;
     }
@@ -113,50 +115,67 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
     }
   }
 
-  /** Immutable host policy for selecting the implementation of each new workflow. */
-  public static final class Options {
-    private final VersionSelector versionSelector;
-    private final boolean customSelector;
+  /** Unified client and worker configuration. An empty builder creates a client-only plugin. */
+  public static final class Builder {
+    private Path packagesDirectory;
+    private Path cacheDirectory;
+    private String clientVersion;
+    private String currentVersion;
+    private boolean customSelector;
+    private boolean workerPolicyConfigured;
+    private VersionSelector versionSelector =
+        context -> {
+          if (context.getAvailableVersions().size() != 1)
+            throw new PackageRuntimeException(
+                "Multiple package versions installed; configure a current version or version selector");
+          return context.getAvailableVersions().get(0);
+        };
 
-    private Options(Builder builder) {
-      versionSelector = builder.versionSelector;
-      customSelector = builder.customSelector;
+    private Builder() {}
+
+    /** Enables package loading on every worker in this plugin's factory. */
+    public Builder setPackagesDirectory(Path packagesDirectory) {
+      this.packagesDirectory = Objects.requireNonNull(packagesDirectory, "packagesDirectory");
+      return this;
     }
 
-    public static Builder newBuilder() {
-      return new Builder();
+    /** Sets the prepared package cache directory; defaults to .package-cache. */
+    public Builder setCacheDirectory(Path cacheDirectory) {
+      this.cacheDirectory = Objects.requireNonNull(cacheDirectory, "cacheDirectory");
+      return this;
     }
 
-    public VersionSelector getVersionSelector() {
-      return versionSelector;
+    /** Requests a version on client workflow starts; unset by default for worker selection. */
+    public Builder setClientVersion(String version) {
+      clientVersion = io.temporal.worker.packages.api.PackageRef.validateVersion(version);
+      return this;
     }
 
-    public static final class Builder {
-      private VersionSelector versionSelector =
-          context -> {
-            if (context.getAvailableVersions().size() != 1)
-              throw new PackageRuntimeException(
-                  "Multiple package versions installed; configure a version selector in plugin options");
-            return context.getAvailableVersions().get(0);
-          };
-      private boolean customSelector;
+    /** Sets the worker's default version for starts without an explicit client version. */
+    public Builder setCurrentVersion(String version) {
+      currentVersion = io.temporal.worker.packages.api.PackageRef.validateVersion(version);
+      versionSelector = context -> version;
+      customSelector = false;
+      workerPolicyConfigured = true;
+      return this;
+    }
 
-      private Builder() {}
+    /**
+     * Selects a default version when recording a new workflow's durable pin, never on replay. The
+     * callback must support concurrent workflows. A task failure before commit may call it again.
+     * The last current-version or selector setting wins.
+     */
+    public Builder setVersionSelector(VersionSelector selector) {
+      versionSelector = Objects.requireNonNull(selector, "versionSelector");
+      currentVersion = null;
+      customSelector = true;
+      workerPolicyConfigured = true;
+      return this;
+    }
 
-      /**
-       * Sets the host policy. It is called only while recording a new durable pin, never on replay.
-       * The callback must support concurrent workflows and return an installed version for the
-       * requested package. A task failure before commit may cause the callback to run again.
-       */
-      public Builder setVersionSelector(VersionSelector versionSelector) {
-        this.versionSelector = Objects.requireNonNull(versionSelector, "versionSelector");
-        customSelector = true;
-        return this;
-      }
-
-      public Options build() {
-        return new Options(this);
-      }
+    /** Builds an independent plugin, validating and preparing worker packages before polling. */
+    public WorkerPackagePlugin build() throws IOException {
+      return new WorkerPackagePlugin(this);
     }
   }
 
@@ -165,16 +184,20 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
     return diagnostics;
   }
 
-  private static String describe(PackageCatalog catalog, String taskQueue, Options options) {
+  private static String describe(
+      PackageCatalog catalog, String currentVersion, boolean customSelector) {
     String current =
-        !options.customSelector && catalog.selectionVersions().size() == 1
-            ? catalog.selectionVersions().get(0)
-            : null;
+        currentVersion != null
+            ? currentVersion
+            : !customSelector && catalog.selectionVersions().size() == 1
+                ? catalog.selectionVersions().get(0)
+                : null;
     StringBuilder output =
-        new StringBuilder("WorkerPackagePlugin{taskQueue=")
-            .append(taskQueue)
-            .append(", versionSelector=")
-            .append(options.customSelector ? "configured" : "singleInstalled");
+        new StringBuilder("WorkerPackagePlugin{versionSelector=")
+            .append(
+                customSelector
+                    ? "configured"
+                    : currentVersion != null ? "currentVersion" : "singleInstalled");
     if (current != null) output.append(", currentVersion=").append(current);
     output.append('}');
     for (ValidatedPackage entry : catalog.entries()) {
@@ -203,11 +226,9 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
   }
 
   public PreparedPackageRuntime runtime() {
+    if (runtime == null)
+      throw new PackageRuntimeException("Client-only plugin has no package runtime");
     return runtime;
-  }
-
-  public String taskQueue() {
-    return taskQueue;
   }
 
   @Override
@@ -216,7 +237,21 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
   }
 
   @Override
+  public void configureWorkflowClient(WorkflowClientOptions.Builder builder) {
+    WorkflowClientInterceptor[] previous = builder.build().getInterceptors();
+    int count = previous == null ? 0 : previous.length;
+    WorkflowClientInterceptor[] combined =
+        previous == null ? new WorkflowClientInterceptor[1] : Arrays.copyOf(previous, count + 1);
+    combined[count] =
+        clientVersion == null
+            ? new PackageClientInterceptor()
+            : new PackageClientInterceptor(clientVersion);
+    builder.setInterceptors(combined);
+  }
+
+  @Override
   public synchronized void configureWorkerFactory(WorkerFactoryOptions.Builder builder) {
+    if (runtime == null) return;
     runtime.checkOpen();
     if (configured)
       throw new PackageRuntimeException(
@@ -225,20 +260,19 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
     int count = previous == null ? 0 : previous.length;
     WorkerInterceptor[] combined =
         previous == null ? new WorkerInterceptor[1] : Arrays.copyOf(previous, count + 1);
-    combined[count] =
-        new PackageWorkerInterceptor(runtime, taskQueue, options.getVersionSelector());
+    combined[count] = new PackageWorkerInterceptor(runtime, versionSelector);
     builder.setWorkerInterceptors(combined);
     configured = true;
   }
 
   @Override
   public void configureWorker(String queue, WorkerOptions.Builder builder) {
-    if (taskQueue.equals(queue)) runtime.checkOpen();
+    if (runtime != null) runtime.checkOpen();
   }
 
   @Override
   public void initializeWorker(String queue, Worker worker) {
-    if (!taskQueue.equals(queue)) return;
+    if (runtime == null) return;
     runtime.checkOpen();
     try {
       worker.registerWorkflowImplementationTypes(ContainerDynamicWorkflow.class);
@@ -252,12 +286,16 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
 
   @Override
   public void startWorker(String queue, Worker worker, BiConsumer<String, Worker> next) {
-    runtime.checkOpen();
+    if (runtime != null) runtime.checkOpen();
     next.accept(queue, worker);
   }
 
   @Override
   public void startWorkerFactory(WorkerFactory factory, Consumer<WorkerFactory> next) {
+    if (runtime == null) {
+      next.accept(factory);
+      return;
+    }
     synchronized (this) {
       runtime.checkOpen();
       if (owner != null && owner != factory)
@@ -272,8 +310,7 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
       throw new PackageRuntimeException("Package plugin belongs to another factory");
     owner = factory;
     if (cleanupScheduled) return;
-    Thread cleanup =
-        new Thread(() -> cleanupAfterTermination(factory), "worker-package-cleanup-" + taskQueue);
+    Thread cleanup = new Thread(() -> cleanupAfterTermination(factory), "worker-package-cleanup");
     cleanup.setDaemon(true);
     cleanup.setContextClassLoader(WorkerPackagePlugin.class.getClassLoader());
     cleanupScheduled = true;
@@ -294,7 +331,7 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
             try {
               runtime.close();
             } catch (IOException failure) {
-              log.warn("Failed to close package loaders for task queue {}", taskQueue, failure);
+              log.warn("Failed to close package loaders", failure);
             }
             return;
           }
@@ -302,7 +339,7 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
       }
       LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
     }
-    log.warn("Package cleanup interrupted for task queue {}; loaders remain open", taskQueue);
+    log.warn("Package cleanup interrupted; loaders remain open");
   }
 
   @Override
@@ -312,6 +349,10 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
 
   @Override
   public void shutdownWorkerFactory(WorkerFactory factory, Consumer<WorkerFactory> next) {
+    if (runtime == null) {
+      next.accept(factory);
+      return;
+    }
     // TODO: Expose an SDK plugin awaitTermination callback that distinguishes actual termination
     // from timeout, so the plugin can close package loaders without host-owned cleanup or a
     // watcher.
@@ -325,6 +366,10 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
   @Override
   public void replayWorkflowExecution(
       Worker worker, WorkflowExecutionHistory history, ReplayCallback next) throws Exception {
+    if (runtime == null) {
+      next.replay(worker, history);
+      return;
+    }
     synchronized (this) {
       runtime.checkOpen();
       if (cleanupScheduled)
@@ -345,6 +390,7 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
    * Call only after shutdown and an actual isTerminated() check, including replay-only factories.
    */
   public void closeAfterTermination(WorkerFactory factory) throws IOException {
+    if (runtime == null) return;
     Objects.requireNonNull(factory);
     if (!factory.isTerminated())
       throw new PackageRuntimeException(
@@ -365,6 +411,7 @@ public final class WorkerPackagePlugin implements WorkerPlugin, AutoCloseable {
    */
   @Override
   public void close() throws IOException {
+    if (runtime == null) return;
     WorkerFactory factory;
     synchronized (this) {
       if (activeReplays != 0)

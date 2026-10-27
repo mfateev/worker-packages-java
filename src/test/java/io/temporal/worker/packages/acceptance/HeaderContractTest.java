@@ -23,7 +23,8 @@ public class HeaderContractTest {
             .build();
     Map<String, Payload> original = new HashMap<>(TestSupport.map("traceparent", tracing));
     Header workflow = PackageHeaders.workflow(new Header(original), "orders");
-    assertEquals("orders", PackageHeaders.workflowPackageId(workflow));
+    assertEquals("orders", PackageHeaders.workflowVersion(workflow));
+    assertNull(PackageHeaders.workflowPackageId(workflow));
     assertSame(tracing, workflow.getValues().get("traceparent"));
     assertEquals(
         "caller headers are not mutated", TestSupport.map("traceparent", tracing), original);
@@ -103,6 +104,26 @@ public class HeaderContractTest {
     assertThrows(
         RuntimeException.class,
         () -> PackageHeaders.activityRef(new Header(TestSupport.map(PackageHeaders.KEY, binary))));
+  }
+
+  @Test
+  public void workflowVersionIsOptionalButMalformedVersionsNeverFallBack() {
+    assertNull(PackageHeaders.workflowVersion(Header.empty()));
+    assertNull(PackageHeaders.workflowVersion(json("{\"formatVersion\":1}")));
+    assertEquals(
+        "sha", PackageHeaders.workflowVersion(PackageHeaders.workflow(Header.empty(), "sha")));
+    for (String invalid : java.util.Arrays.asList("null", "1", "\"\"", "\"../bad\"")) {
+      assertThrows(
+          RuntimeException.class,
+          () ->
+              PackageHeaders.workflowVersion(
+                  json("{\"formatVersion\":1,\"packageVersion\":" + invalid + "}")));
+    }
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            PackageHeaders.workflowVersion(
+                json("{\"formatVersion\":1,\"packageVersion\":\"sha\",\"extra\":true}")));
   }
 
   private static Header json(String json) {

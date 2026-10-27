@@ -145,12 +145,12 @@ public class WorkerPackagePluginTest {
   }
 
   @Test
-  public void rejectsMissingWorkflowAndBlankDefaultVersion() throws IOException {
-    Path project = fixture("version = '1'\nworkerPackage.workflows = [:]\n");
+  public void rejectsMissingEntrypointsAndBlankDefaultVersion() throws IOException {
+    Path project = fixture("version = '1'\nworkerPackage { workflows = [:]; activities = [:] }\n");
     assertTrue(
         run(project, true, "workerPackage")
             .getOutput()
-            .contains("At least one workflow is required"));
+            .contains("At least one workflow or activity is required"));
     Path versionProject = fixture("version = ''\n");
     assertTrue(
         run(versionProject, true, "workerPackage").getOutput().contains("nonblank version token"));
@@ -171,6 +171,16 @@ public class WorkerPackagePluginTest {
         run(project, true, "workerPackage")
             .getOutput()
             .contains("Runtime JAR filename collision: private.jar"));
+  }
+
+  @Test
+  public void packagesActivitiesWithoutWorkflows() throws IOException {
+    Path project = fixture("version = '1'\nworkerPackage { workflows = [:] }\n");
+    run(project, false, "workerPackage");
+    PackageManifest manifest =
+        new PackageValidator().validate(project.resolve("build/libs/greetings-1.twp")).manifest();
+    assertEquals(0, manifest.workflows().size());
+    assertEquals(1, manifest.activities().size());
   }
 
   private Path fixture(String extra) throws IOException {
